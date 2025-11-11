@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AR Career Experience</title>
 
-    <!-- MindAR + A-Frame -->
     <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-aframe.prod.js"></script>
 
@@ -14,15 +13,14 @@
         margin: 0;
         padding: 0;
         overflow: hidden;
-        font-family: "Prompt", sans-serif;
         background-color: #f9f9f9;
-        color: #222;
+        font-family: "Prompt", sans-serif;
       }
 
       #start-screen {
         position: fixed;
         inset: 0;
-        background: white;
+        background: #fff;
         display: flex;
         flex-direction: column;
         justify-content: center;
@@ -31,15 +29,16 @@
       }
 
       #start-screen h1 {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
         font-weight: 600;
         margin-bottom: 1rem;
+        color: #333;
       }
 
       #start-button {
-        padding: 0.7rem 1.5rem;
+        padding: 0.8rem 1.8rem;
         font-size: 1rem;
-        background: #222;
+        background: #111;
         color: white;
         border: none;
         border-radius: 999px;
@@ -48,7 +47,7 @@
       }
 
       #start-button:hover {
-        background: #555;
+        background: #444;
       }
 
       #scan-frame {
@@ -76,18 +75,15 @@
     </style>
   </head>
   <body>
-    <!-- หน้ากดเริ่ม -->
     <div id="start-screen">
       <h1>เริ่มต้น AR Experience</h1>
       <button id="start-button">Start AR</button>
     </div>
 
-    <!-- กรอบสแกน -->
     <div id="scan-frame">
       <div id="scan-box"></div>
     </div>
 
-    <!-- AR Scene -->
     <a-scene
       id="ar-scene"
       mindar-image="imageTargetSrc: ./AR_Marker/targets.mind; autoStart: false; uiScanning: false;"
@@ -104,8 +100,8 @@
           preload="auto"
           loop
           crossorigin="anonymous"
-          webkit-playsinline
           playsinline
+          webkit-playsinline
         ></video>
         <a-asset-item id="model-computer" src="./Computer/Computer-Model.glb"></a-asset-item>
       </a-assets>
@@ -113,56 +109,43 @@
       <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
       <a-entity mindar-image-target="targetIndex: 0">
-        <a-video
-          src="#video-computer"
-          position="0 0 0"
-          width="1"
-          height="0.6"
-          rotation="0 0 0"
-        ></a-video>
-        <a-gltf-model
-          src="#model-computer"
-          position="0 -0.3 0"
-          scale="0.5 0.5 0.5"
-          rotation="0 0 0"
-        ></a-gltf-model>
+        <a-video src="#video-computer" position="0 0 0" width="1" height="0.6"></a-video>
+        <a-gltf-model src="#model-computer" position="0 -0.3 0" scale="0.5 0.5 0.5"></a-gltf-model>
       </a-entity>
     </a-scene>
 
     <script>
-      const startButton = document.getElementById("start-button");
+      const startBtn = document.getElementById("start-button");
       const startScreen = document.getElementById("start-screen");
       const scanFrame = document.getElementById("scan-frame");
       const scene = document.querySelector("#ar-scene");
       const video = document.querySelector("#video-computer");
 
-      startButton.addEventListener("click", async () => {
+      startBtn.addEventListener("click", async () => {
         try {
-          // ขออนุญาตกล้อง
+          // 🟢 ขออนุญาตทุกอย่างภายในการคลิกเดียว
           await navigator.mediaDevices.getUserMedia({ video: true });
-          // ขออนุญาต motion (บางอุปกรณ์ iOS)
+
           if (typeof DeviceOrientationEvent.requestPermission === "function") {
             try {
               await DeviceOrientationEvent.requestPermission();
             } catch (err) {
-              console.warn("motion permission:", err);
+              console.warn("motion permission denied:", err);
             }
           }
 
-          // เริ่ม AR
+          // 🟢 เริ่ม MindAR หลังจากได้กล้องแน่ ๆ
           startScreen.style.display = "none";
           scanFrame.style.display = "flex";
-          scene.components["mindar-image"].start();
 
-          scene.addEventListener("targetFound", () => {
-            video.play();
-          });
+          // start MindAR (ใช้ user gesture เดียว)
+          await scene.components["mindar-image"].start();
 
-          scene.addEventListener("targetLost", () => {
-            video.pause();
-          });
+          // event เมื่อ marker เจอ / หาย
+          scene.addEventListener("targetFound", () => video.play());
+          scene.addEventListener("targetLost", () => video.pause());
         } catch (err) {
-          alert("ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตในเบราว์เซอร์");
+          alert("⚠️ ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตในเบราว์เซอร์");
           console.error(err);
         }
       });
