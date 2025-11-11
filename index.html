@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AR Job Experience</title>
+    <title>Network AR Experience</title>
 
     <script type="importmap">
       {
@@ -19,7 +19,7 @@
       body {
         margin: 0;
         font-family: "Poppins", sans-serif;
-        background: #f9f9f9;
+        background: #fafafa;
         overflow: hidden;
       }
 
@@ -95,7 +95,7 @@
 
     <video
       id="networkVideo"
-      src="Job/Computer/Computer.mp4"
+      src="Job/Network/video-network.mp4"
       muted
       loop
       playsinline
@@ -116,23 +116,27 @@
         const { renderer, scene, camera } = mindarThree;
         const anchor = mindarThree.addAnchor(0);
 
+        // 🎥 โหลดวิดีโอ
         const video = document.querySelector("#networkVideo");
         const videoTexture = new THREE.VideoTexture(video);
         const videoGeometry = new THREE.PlaneGeometry(1, 0.56);
-        const videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+        const videoMaterial = new THREE.MeshBasicMaterial({
+          map: videoTexture,
+          side: THREE.DoubleSide,
+        });
         const videoMesh = new THREE.Mesh(videoGeometry, videoMaterial);
         videoMesh.position.set(0, 0.5, 0);
         anchor.group.add(videoMesh);
 
-        // โหลดโมเดล
+        // 🧍 โหลดโมเดล Network
         const loader = new GLTFLoader();
-        loader.load("Job/Computer/Computer-Model.glb", (gltf) => {
+        loader.load("Job/Network/network-model.glb", (gltf) => {
           gltf.scene.scale.set(0.25, 0.25, 0.25);
           gltf.scene.position.set(0, 0, 0);
           anchor.group.add(gltf.scene);
         });
 
-        // ---------- กันสั่น ----------
+        // ---------- ระบบกันสั่น ----------
         const smoothedGroup = new THREE.Group();
         scene.add(smoothedGroup);
         smoothedGroup.add(anchor.group);
@@ -177,11 +181,10 @@
           });
         };
 
-        // ปุ่ม Start
+        // 🔘 ปุ่มเริ่ม AR + ขอสิทธิ์กล้อง
         const startButton = document.querySelector("#startButton");
         startButton.addEventListener("click", async () => {
           try {
-            // ขออนุญาตกล้อง
             await navigator.mediaDevices.getUserMedia({ video: true });
             document.querySelector("#scan-frame").style.display = "block";
             startButton.style.display = "none";
