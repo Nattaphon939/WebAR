@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MindAR + Scan Frame + GLB & Video on Found</title>
+  <title>AR Preload → Start (ขออนุญาตเสียง+กล้อง) → Scan</title>
 
   <script type="importmap">
   {
@@ -16,14 +16,44 @@
   </script>
 
   <style>
-    html,body{height:100%; margin:0}
+    :root{
+      --bg:#050607;
+      --accent:#10b981;
+      --muted:rgba(255,255,255,0.12);
+    }
+    html,body{height:100%; margin:0; font-family:system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:#fff}
+    /* container for AR view */
     #container{width:100vw; height:100vh; position:relative; overflow:hidden; background:#000}
-    #control{position:fixed; top:10px; left:10px; z-index:30}
-    #control button{margin-right:6px; padding:8px 10px; border-radius:6px; background:#111; color:#fff; border:1px solid rgba(255,255,255,0.08); cursor:pointer}
 
-    /* Scan overlay (กรอบสแกน) */
+    /* full-screen loader */
+    #loaderWrap{
+      position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:50;
+      background:linear-gradient(180deg, rgba(0,0,0,0.7), rgba(0,0,0,0.5));
+      transition:opacity .3s ease, visibility .3s;
+    }
+    #loader{
+      width:min(880px,94vw); max-width:96vw; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:20px; border-radius:12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+    }
+    #loader h2{margin:0 0 8px 0; font-size:1.15rem}
+    #loader p{margin:0 0 18px 0; color:rgba(255,255,255,0.75); font-size:0.95rem}
+
+    .progressBar{
+      width:100%; height:14px; background:rgba(255,255,255,0.04); border-radius:10px; overflow:hidden;
+      border:1px solid var(--muted);
+    }
+    .progressFill{height:100%; width:0%; background:linear-gradient(90deg,var(--accent), #06a36b); transition:width .15s linear}
+    .progressMeta{display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:0.9rem}
+    .small{font-size:0.82rem; color:rgba(255,255,255,0.7)}
+
+    #startButton{
+      margin-top:14px; padding:10px 14px; border-radius:8px; border:none; background:var(--accent); color:#042016; font-weight:600; cursor:pointer;
+    }
+    #startButton[disabled]{opacity:0.45; cursor:not-allowed}
+
+    /* scan overlay (กรอบ) อยู่ด้านบนของ container */
+    .scan-overlay{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:30}
     :root{ --frame-size: min(72vmin, 720px); }
-    .scan-overlay{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:20}
     .scan-frame{width:var(--frame-size); height:var(--frame-size); max-width:90%; max-height:90%; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45) inset; border-radius:12px; border:3px solid rgba(255,255,255,0.12); position:relative}
     .scan-frame:before, .scan-frame:after{content:''; position:absolute; left:8px; right:8px; height:2px; background:linear-gradient(90deg, rgba(255,255,255,0.0), rgba(255,255,255,0.55), rgba(255,255,255,0.0)); animation:scanline 2.2s linear infinite}
     .scan-frame:before{top:6%}
@@ -35,20 +65,24 @@
     .corner.br{right:-12px; bottom:-12px; border-left:none; border-top:none}
     @keyframes scanline{0%{transform:translateY(-6%)}50%{transform:translateY(106%)}100%{transform:translateY(-6%)}}
 
-    /* small screen */
+    /* control top-left (for testing stop) */
+    #ctrl{position:fixed; top:10px; left:10px; z-index:40}
+    #ctrl button{padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.4); color:#fff; margin-right:8px; cursor:pointer}
+
     @media (max-width:520px){ :root{ --frame-size:76vmin } }
   </style>
 </head>
 <body>
-  <div id="control">
-    <button id="startButton">Start AR (ขออนุญาตกล้อง)</button>
-    <button id="stopButton">Stop AR</button>
+  <!-- control buttons -->
+  <div id="ctrl">
+    <button id="stopButton" style="display:none">Stop AR</button>
   </div>
 
+  <!-- AR container -->
   <div id="container"></div>
 
-  <!-- overlay scan frame -->
-  <div class="scan-overlay" id="scanOverlay" aria-hidden="true">
+  <!-- scan overlay (hidden until AR started) -->
+  <div class="scan-overlay" id="scanOverlay" style="display:none" aria-hidden="true">
     <div class="scan-frame" role="presentation" id="scanFrame">
       <div class="corner tl"></div>
       <div class="corner tr"></div>
@@ -57,186 +91,388 @@
     </div>
   </div>
 
+  <!-- full-screen loader (initial) -->
+  <div id="loaderWrap" aria-live="polite">
+    <div id="loader" role="dialog" aria-modal="true" aria-label="Loading AR content">
+      <h2>กำลังเตรียมเนื้อหา AR…</h2>
+      <p>ระบบจะโหลดไฟล์ AR (targets), โมเดล 3D และวิดีโอล่วงหน้า เพื่อให้เมื่อกด Start แล้วสามารถขอสิทธิ์และสแกนได้ทันที</p>
+
+      <div class="progressBar" aria-hidden="false">
+        <div class="progressFill" id="progressFill"></div>
+      </div>
+      <div class="progressMeta">
+        <div class="small" id="progressLabel">กำลังโหลด: 0%</div>
+        <div class="small" id="progressStage">Waiting…</div>
+      </div>
+
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button id="startButton" disabled title="รอโหลดไฟล์จนเสร็จ">Start AR (ขออนุญาตตอนกด)</button>
+        <div class="small" id="hint">หมายเหตุ: ต้องรันบน <strong>HTTPS</strong> หรือ <strong>localhost</strong></div>
+      </div>
+    </div>
+  </div>
+
   <script type="module">
     import * as THREE from 'three';
     import { MindARThree } from 'mindar-image-three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-    // ====== CONFIG ======
-    // เปลี่ยนสองพาธนี้ให้เป็นของโปรเจคจริงของคุณ
-    const IMAGE_TARGET_SRC = 'AR_Marker/targets.mind'; // <-- ตามที่คุณบอก
-    const MODEL_URL = 'jobs/new/new-model.glb';       // <-- เปลี่ยนเป็นพาธโมเดลของคุณ
-    const VIDEO_URL = 'jobs/new/video-new.mp4';      // <-- เปลี่ยนเป็นพาธวิดีโอของคุณ
-    // ====================
+    // ====== CONFIG - เปลี่ยนพาธตามโปรเจคของคุณ ======
+    const IMAGE_TARGET_SRC = 'AR_Marker/targets.mind'; // <-- ไฟล์ target ที่ต้องโหลด
+    const MODEL_URL = 'jobs/new/new-model.glb';       // <-- โมเดล GLB (preload)
+    const VIDEO_URL = 'jobs/new/video-new.mp4';      // <-- วิดีโอ (preload)
+    // ==================================================
 
-    const container = document.querySelector('#container');
-    const scanOverlay = document.querySelector('#scanOverlay');
-    const startButton = document.querySelector('#startButton');
-    const stopButton = document.querySelector('#stopButton');
+    // Weights for combined progress (ปรับตามขนาด/ความสำคัญ)
+    const WEIGHT = { targets: 0.2, model: 0.5, video: 0.3 };
 
-    // สร้าง instance MindAR
-    const mindarThree = new MindARThree({
-      container: container,
-      imageTargetSrc: IMAGE_TARGET_SRC,
-      // ถ้าต้องการปรับ resolution/cameraPreference ให้ใส่ที่นี่
-      // uiElement: null // ถ้าต้องการปิด UI ของ mindar
-    });
-    const { renderer, scene, camera } = mindarThree;
+    // UI refs
+    const loaderWrap = document.getElementById('loaderWrap');
+    const progressFill = document.getElementById('progressFill');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressStage = document.getElementById('progressStage');
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    const scanOverlay = document.getElementById('scanOverlay');
+    const container = document.getElementById('container');
 
-    // anchor สำหรับ target index 0 (สมมติว่าใน targets.mind มี target แรกคือที่ต้องการ)
-    const anchor = mindarThree.addAnchor(0);
+    // state holders (preloaded content)
+    let preloaded = {
+      targetsLoaded: false,
+      targetsProgress: 0,
+      modelLoaded: false,
+      modelProgress: 0,
+      videoLoaded: false,
+      videoProgress: 0,
+      gltfScene: null,
+      videoEl: null,
+      videoTexture: null
+    };
 
-    // loader สำหรับ GLB
-    const gltfLoader = new GLTFLoader();
-
-    // ตัวเก็บโมเดลและ plane วิดีโอ
-    let modelRoot = null;
-    let videoMesh = null;
-    let videoEl = null;
-
-    // สร้าง video element (DOM) สำหรับใช้เป็น texture
-    function createVideoElement(url){
-      const v = document.createElement('video');
-      v.src = url;
-      v.crossOrigin = 'anonymous';
-      v.loop = true;
-      v.muted = false; // ตั้งเป็น true ถ้าต้องการให้เงียบเริ่มต้น
-      v.playsInline = true;
-      v.preload = 'auto';
-      v.style.display = 'none';
-      // อย่า append ถ้าไม่ต้องการ แต่เพื่อให้บางบราว์เซอร์เล่นได้ต้องอยู่บน DOM บางตัว
-      document.body.appendChild(v);
-      return v;
-    }
-
-    // ฟังก์ชันช่วยโหลดโมเดลและสร้าง mesh วิดีโอ แล้วเพิ่มลง anchor.group แต่ซ่อนก่อน
-    async function prepareContent(){
-      // โหลดโมเดล GLB
-      try{
-        const gltf = await gltfLoader.loadAsync(MODEL_URL);
-        modelRoot = gltf.scene;
-        // ปรับ scale/rotation/position ตามที่ต้องการ (แก้ให้พอดีขนาด marker)
-        // ตัวอย่าง:
-        modelRoot.scale.set(0.06,0.06,0.06); // ปรับขนาดให้เหมาะสม
-        modelRoot.position.set(0, 0, 0);
-        modelRoot.visible = false; // ซ่อนก่อนจนกว่าจะเจอ target
-        anchor.group.add(modelRoot);
-      }catch(err){
-        console.warn('โหลดโมเดลล้มเหลว:', err);
-      }
-
-      // สร้าง plane สำหรับเล่นวิดีโอ
-      try{
-        videoEl = createVideoElement(VIDEO_URL);
-        // ไม่ play ทันที เราจะ play เมื่อ target ถูกพบ
-        // สร้าง texture จาก video
-        const videoTexture = new THREE.VideoTexture(videoEl);
-        videoTexture.encoding = THREE.sRGBEncoding;
-        const aspect = 16/9;
-        const planeWidth = 1.0; // จะปรับตามขนาดที่ต้องการให้พอดีกับโมเดล/marker
-        const planeHeight = planeWidth / aspect;
-        const geo = new THREE.PlaneGeometry(planeWidth, planeHeight);
-        const mat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide, toneMapped: false });
-        videoMesh = new THREE.Mesh(geo, mat);
-        // ปรับตำแหน่ง plane ให้ไม่ชนโมเดล (แก้ตามความต้องการ)
-        videoMesh.position.set(0, 0.25, 0); // ยกขึ้นเล็กน้อย
-        videoMesh.rotation.x = -Math.PI/2 * 0.05; // ปรับมุมเล็กน้อยถ้าต้องการ
-        videoMesh.visible = false; // ซ่อนก่อน
-        anchor.group.add(videoMesh);
-      }catch(err){
-        console.warn('สร้างวิดีโอ mesh ผิดพลาด:', err);
+    // helper to update UI combined progress
+    function updateCombinedProgress(){
+      const t = preloaded.targetsProgress || 0;
+      const m = preloaded.modelProgress || 0;
+      const v = preloaded.videoProgress || 0;
+      const combined = Math.min(100, Math.round((t*WEIGHT.targets + m*WEIGHT.model + v*WEIGHT.video)));
+      progressFill.style.width = combined + '%';
+      progressLabel.textContent = `กำลังโหลด: ${combined}%`;
+      // stage indicator
+      if(!preloaded.targetsLoaded) progressStage.textContent = 'โหลด targets.mind';
+      else if(!preloaded.modelLoaded) progressStage.textContent = 'โหลดโมเดล 3D';
+      else if(!preloaded.videoLoaded) progressStage.textContent = 'โหลดวิดีโอ';
+      else progressStage.textContent = 'พร้อมแล้ว';
+      // enable start when fully loaded
+      if(preloaded.targetsLoaded && preloaded.modelLoaded && preloaded.videoLoaded){
+        startButton.disabled = false;
+        startButton.focus();
       }
     }
 
-    // เรียก preparecontent แต่ไม่ต้อง await ที่ปุ่ม start — เพื่อ preload ก่อน
-    prepareContent();
-
-    // แสดง/ซ่อน overlay (scan frame)
-    function showScanOverlay(){ scanOverlay.style.display = 'flex' }
-    function hideScanOverlay(){ scanOverlay.style.display = 'none' }
-
-    // เมื่อพบ target (trigger จาก mindar anchor)
-    anchor.onTargetFound = () => {
-      console.log('target found');
-      hideScanOverlay();
-
-      // แสดงโมเดล/วิดีโอ
-      if(modelRoot) modelRoot.visible = true;
-      if(videoMesh) {
-        videoMesh.visible = true;
-        // บางเบราว์เซอร์ต้องการ gesture จากผู้ใช้ก่อน play เสียง — ถ้าเสียงสำคัญ ให้ตั้ง muted=false และเรียก play หลัง gesture
-        // เราจะพยายาม play (นำไปใช้กับ videoEl)
-        const p = videoEl.play();
-        if(p && p.catch){
-          p.catch(err => {
-            console.warn('video play rejected:', err);
-            // ถ้าถูกบล็อกเพราะไม่มี gesture ให้ mute แล้วลอง play อีกครั้ง
-            videoEl.muted = true;
-            videoEl.play().catch(()=>{/* ignore */});
-          });
+    // ========== preload targets.mind with byte stream progress ==========
+    async function preloadTargets(url){
+      preloaded.targetsProgress = 0; updateCombinedProgress();
+      try{
+        const resp = await fetch(url, {method:'GET', cache:'no-store'});
+        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        // try stream reading to get progress
+        const contentLength = resp.headers.get('content-length');
+        if(!resp.body || !contentLength){
+          // fallback: if no stream, just await arrayBuffer
+          await resp.arrayBuffer();
+          preloaded.targetsProgress = 100;
+          preloaded.targetsLoaded = true;
+          updateCombinedProgress();
+          return;
         }
+        const total = parseInt(contentLength, 10);
+        const reader = resp.body.getReader();
+        let loaded = 0;
+        while(true){
+          const {done, value} = await reader.read();
+          if(done) break;
+          loaded += (value ? value.length : 0);
+          preloaded.targetsProgress = Math.round(loaded / total * 100);
+          updateCombinedProgress();
+        }
+        preloaded.targetsProgress = 100;
+        preloaded.targetsLoaded = true;
+        updateCombinedProgress();
+      }catch(err){
+        console.error('preloadTargets error', err);
+        alert('ไม่สามารถโหลด targets.mind: ' + (err.message || err));
+        // still mark as failed — keep UI but disable start
+        preloaded.targetsProgress = 0;
+        preloaded.targetsLoaded = false;
+        updateCombinedProgress();
+        throw err;
       }
-    };
-
-    anchor.onTargetLost = () => {
-      console.log('target lost');
-      // แสดง overlay สแกนอีกครั้ง
-      showScanOverlay();
-
-      // ซ่อนและหยุดวิดีโอ (หรือ pause)
-      if(modelRoot) modelRoot.visible = false;
-      if(videoMesh) {
-        videoMesh.visible = false;
-        try{ videoEl.pause(); }catch(e){}
-        // ถ้าต้องการ reset เวลา: videoEl.currentTime = 0;
-      }
-    };
-
-    // render loop (mindarThree.start จะเรียก renderer loop แทน)
-    function startAR(){
-      showScanOverlay();
-      mindarThree.start()
-        .then(()=> {
-          console.log('mindar started');
-          renderer.setAnimationLoop(() => {
-            renderer.render(scene, camera);
-          });
-        })
-        .catch(err => {
-          console.error('mindar start failed:', err);
-          alert('ไม่สามารถเริ่ม AR: ' + (err.message || err.name));
-        });
     }
 
-    async function stopAR(){
+    // ========== preload GLB with loader progress ==========
+    function preloadModel(url){
+      return new Promise((resolve, reject) => {
+        preloaded.modelProgress = 0; updateCombinedProgress();
+        const loader = new GLTFLoader();
+        loader.load(url,
+          // onLoad
+          (gltf) => {
+            preloaded.gltfScene = gltf.scene;
+            preloaded.modelProgress = 100;
+            preloaded.modelLoaded = true;
+            updateCombinedProgress();
+            resolve(gltf.scene);
+          },
+          // onProgress
+          (xhr) => {
+            // xhr.loaded / xhr.total may be undefined in some servers — guard it
+            if(xhr && xhr.total) {
+              preloaded.modelProgress = Math.round(xhr.loaded / xhr.total * 100);
+            } else {
+              // fallback: gently animate progress if unknown
+              preloaded.modelProgress = Math.min(95, preloaded.modelProgress + 6);
+            }
+            updateCombinedProgress();
+          },
+          // onError
+          (err) => {
+            console.error('preloadModel error', err);
+            reject(err);
+          }
+        );
+      });
+    }
+
+    // ========== preload video (wait for canplaythrough) ==========
+    function preloadVideo(url){
+      return new Promise((resolve, reject) => {
+        preloaded.videoProgress = 0; updateCombinedProgress();
+        const v = document.createElement('video');
+        v.src = url;
+        v.preload = 'auto';
+        v.crossOrigin = 'anonymous';
+        v.playsInline = true;
+        v.muted = true; // muted for preload to avoid autoplay block; we'll unmute after permission
+        v.loop = true;
+        v.style.display = 'none';
+        document.body.appendChild(v);
+        // progress simulation via buffered (best-effort)
+        const onLoaded = () => {
+          preloaded.videoProgress = 100;
+          preloaded.videoLoaded = true;
+          preloaded.videoEl = v;
+          updateCombinedProgress();
+          // create texture later after THREE exists
+          resolve(v);
+        };
+        const onProgress = () => {
+          try{
+            if(v.buffered && v.buffered.length){
+              const bufferedEnd = v.buffered.end(v.buffered.length - 1);
+              const duration = v.duration || 1;
+              preloaded.videoProgress = Math.min(99, Math.round(bufferedEnd / duration * 100));
+              updateCombinedProgress();
+            } else {
+              // bump progress slowly
+              preloaded.videoProgress = Math.min(90, preloaded.videoProgress + 4);
+              updateCombinedProgress();
+            }
+          }catch(e){}
+        };
+        const onError = (e) => {
+          console.error('preloadVideo error', e);
+          reject(e);
+        };
+        v.addEventListener('canplaythrough', onLoaded, {once:true});
+        v.addEventListener('progress', onProgress);
+        v.addEventListener('error', onError, {once:true});
+        // try to start loading
+        v.load();
+        // safety timeout: if nothing happens, resolve after 20s (best-effort)
+        setTimeout(() => {
+          if(!preloaded.videoLoaded){
+            console.warn('video preload timeout — marking loaded (best-effort)');
+            preloaded.videoProgress = 100;
+            preloaded.videoLoaded = true;
+            preloaded.videoEl = v;
+            updateCombinedProgress();
+            resolve(v);
+          }
+        }, 20000);
+      });
+    }
+
+    // ======= Perform preloads in parallel, update progress =======
+    async function doPreloads(){
       try{
-        await mindarThree.stop();
-        renderer.setAnimationLoop(null);
-        // pause video หากกำลังเล่น
-        if(videoEl) try{ videoEl.pause(); }catch(e){}
-        // show overlay เมื่อหยุด
-        showScanOverlay();
-      }catch(e){
-        console.warn('stopAR failed', e);
+        // start all three but await each; keep independent so we can show stage
+        const tasks = [
+          preloadTargets(IMAGE_TARGET_SRC).catch(e => { throw e; }),
+          preloadModel(MODEL_URL).catch(e => { throw e; }),
+          preloadVideo(VIDEO_URL).catch(e => { throw e; }),
+        ];
+        // Wait for all
+        await Promise.all(tasks);
+        // final update
+        preloaded.targetsProgress = preloaded.modelProgress = preloaded.videoProgress = 100;
+        preloaded.targetsLoaded = preloaded.modelLoaded = preloaded.videoLoaded = true;
+        updateCombinedProgress();
+      }catch(err){
+        console.error('doPreloads failed', err);
+        // keep loader visible and disable start
+        startButton.disabled = true;
       }
     }
 
-    // bind ปุ่ม
+    // Start preloading immediately
+    doPreloads();
+
+    // ========== AR startup flow (on Start button clicked) ==========
+    let mindarThree = null;
+    let renderer = null;
+    let scene = null;
+    let camera = null;
+    let anchor = null;
+    let videoMesh = null;
+    let videoTexture = null;
+
+    async function startARFlow(){
+      startButton.disabled = true;
+      progressStage.textContent = 'ขอสิทธิ์ใช้งานเสียงและกล้อง...';
+      try{
+        // 1) ขอสิทธิ์เสียง (audio) — เรียกเฉพาะ audio เพื่อไม่ชนกับ MindAR's internal camera permission
+        try{
+          await navigator.mediaDevices.getUserMedia({ audio: true });
+          console.log('audio permission granted');
+        }catch(audioErr){
+          console.warn('audio permission denied or error', audioErr);
+          // ถ้าผู้ใช้ปฏิเสธ เสนอให้ดำเนินการต่อโดยไม่มีเสียง
+        }
+
+        // 2) สร้าง MindAR instance และ start (mindarThree.start() จะขอ permission กล้อง)
+        progressStage.textContent = 'เริ่มระบบ AR (ขออนุญาตกล้อง)...';
+        mindarThree = new MindARThree({
+          container: container,
+          imageTargetSrc: IMAGE_TARGET_SRC
+        });
+        renderer = mindarThree.renderer;
+        scene = mindarThree.scene;
+        camera = mindarThree.camera;
+
+        // create anchor AFTER mindarThree created
+        anchor = mindarThree.addAnchor(0);
+
+        // attach preloaded GLTF and video (but keep them hidden until found)
+        if(preloaded.gltfScene){
+          preloaded.gltfScene.visible = false;
+          // tweak scale/pos if needed
+          preloaded.gltfScene.scale.set(0.06,0.06,0.06);
+          anchor.group.add(preloaded.gltfScene);
+        }
+
+        // video: create texture from preloaded video element
+        if(preloaded.videoEl){
+          // unmute video if user gave audio permission earlier
+          try{
+            // attempt to unmute — if user didn't allow audio, play may still be allowed muted
+            preloaded.videoEl.muted = false;
+          }catch(e){}
+          videoTexture = new THREE.VideoTexture(preloaded.videoEl);
+          videoTexture.encoding = THREE.sRGBEncoding;
+          const aspect = (preloaded.videoEl.videoWidth && preloaded.videoEl.videoHeight) ? (preloaded.videoEl.videoWidth / preloaded.videoEl.videoHeight) : (16/9);
+          const planeWidth = 1.0;
+          const planeHeight = planeWidth / aspect;
+          const geo = new THREE.PlaneGeometry(planeWidth, planeHeight);
+          const mat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
+          videoMesh = new THREE.Mesh(geo, mat);
+          videoMesh.visible = false;
+          videoMesh.position.set(0, 0.25, 0);
+          anchor.group.add(videoMesh);
+        }
+
+        // Start MindAR -> this will ask camera permission now (user gesture happened)
+        await mindarThree.start();
+        console.log('mindar started');
+        // show scan overlay
+        scanOverlay.style.display = 'flex';
+        // show stop control
+        stopButton.style.display = 'inline-block';
+        // remove loader UI (fade out)
+        loaderWrap.style.opacity = '0';
+        setTimeout(()=> loaderWrap.style.visibility = 'hidden', 350);
+
+        // render loop
+        renderer.setAnimationLoop(() => {
+          renderer.render(scene, camera);
+        });
+
+        // anchor events: show/hide model + play/pause video
+        anchor.onTargetFound = () => {
+          console.log('target found');
+          scanOverlay.style.display = 'none';
+          if(preloaded.gltfScene) preloaded.gltfScene.visible = true;
+          if(videoMesh && preloaded.videoEl){
+            videoMesh.visible = true;
+            // try play video (should be allowed because user gesture + audio permission)
+            const playP = preloaded.videoEl.play();
+            if(playP && playP.catch){
+              playP.catch(err => {
+                console.warn('video play rejected after start:', err);
+                // fallback: mute and play
+                preloaded.videoEl.muted = true;
+                preloaded.videoEl.play().catch(()=>{});
+              });
+            }
+          }
+        };
+        anchor.onTargetLost = () => {
+          console.log('target lost');
+          scanOverlay.style.display = 'flex';
+          if(preloaded.gltfScene) preloaded.gltfScene.visible = false;
+          if(videoMesh && preloaded.videoEl){
+            videoMesh.visible = false;
+            try{ preloaded.videoEl.pause(); }catch(e){}
+          }
+        };
+
+      }catch(err){
+        console.error('startARFlow error', err);
+        alert('ไม่สามารถเริ่ม AR ได้: ' + (err.message || err));
+        startButton.disabled = false;
+      }
+    }
+
+    // bind start button
     startButton.addEventListener('click', () => {
-      // เรียก start — MindAR จะขออนุญาตกล้อง ถ้ายังไม่ให้
-      startAR();
-    });
-    stopButton.addEventListener('click', () => {
-      stopAR();
+      startARFlow();
     });
 
-    // ถ้าต้องการ preload content ก่อน ให้เรียก prepareContent() ที่โหลดโมเดล/วิดีโอไว้แล้ว
-    // เราเรียก prepareContent() ตอนเริ่มหน้าเพจแล้ว
+    // stop button handler
+    stopButton.addEventListener('click', async () => {
+      try{
+        if(mindarThree){
+          await mindarThree.stop();
+          mindarThree = null;
+          // stop video
+          if(preloaded.videoEl) try{ preloaded.videoEl.pause(); }catch(e){}
+          // stop render
+          if(renderer) renderer.setAnimationLoop(null);
+          // show loader again so user can restart (optional)
+          loaderWrap.style.visibility = 'visible';
+          loaderWrap.style.opacity = '1';
+          scanOverlay.style.display = 'none';
+          stopButton.style.display = 'none';
+          startButton.disabled = false;
+        }
+      }catch(e){
+        console.warn('stop error', e);
+      }
+    });
 
-    // ปิด overlay ถ้าเบราว์เซอร์ไม่รองรับหรือเกิดปัญหา
+    // Compatibility check
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-      alert('เบราว์เซอร์นี้ไม่รองรับกล้อง (getUserMedia) — ใช้ Chrome/Edge/Firefox รุ่นล่าสุดบนมือถือหรือเดสก์ท็อป');
-      showScanOverlay();
+      alert('เบราว์เซอร์นี้ไม่รองรับ getUserMedia — โปรดใช้ Chrome/Edge/Firefox บน HTTPS หรือ localhost');
+      startButton.disabled = true;
     }
   </script>
 </body>
