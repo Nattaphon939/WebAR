@@ -1,239 +1,112 @@
-<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MindAR Diagnostic — Start + enumerateDevices + preview</title>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-      "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
-    }
-  }
-  </script>
-
-  <style>
-    html,body{height:100%; margin:0; background:#000; color:#fff; font-family:system-ui,Segoe UI,Roboto,Arial}
-    #container{width:100vw; height:100vh; position:relative; overflow:hidden; background:#000}
-    /* บังคับ canvas ให้เต็ม container (ป้องกัน canvas ขนาด 0 ทำให้เห็นจอดำ) */
-    canvas { display:block !important; width:100% !important; height:100% !important; }
-
-    #controls { position:fixed; left:12px; top:12px; z-index:999; display:flex; gap:8px; }
-    button { padding:8px 10px; border-radius:6px; border:none; cursor:pointer; font-weight:600 }
-    .start { background:#10b981; color:#042016 }
-    .stop  { background:#ef4444; color:#fff }
-
-    /* small debug preview */
-    #dbgPreview { position:fixed; right:8px; bottom:8px; width:140px; height:100px; z-index:99999; border:2px solid rgba(255,255,255,0.08); display:none; border-radius:6px; overflow:hidden; }
-    #dbgPreview video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); } /* mirror for ease */
-
-    #logBox { position:fixed; left:12px; bottom:12px; z-index:999; max-width:45vw; max-height:30vh; overflow:auto; background:rgba(0,0,0,0.6); padding:8px; border-radius:8px; font-size:12px; display:none;}
-    #logBox pre { margin:0; white-space:pre-wrap; color:#cfeee2 }
-  </style>
-</head>
-<body>
-  <div id="controls">
-    <button id="startBtn" class="start">Start AR (diagnostic)</button>
-    <button id="stopBtn" class="stop" disabled>Stop AR</button>
-  </div>
-
-  <div id="container"></div>
-
-  <div id="dbgPreview" aria-hidden="true"><video autoplay muted playsinline></video></div>
-  <div id="logBox" aria-hidden="true"><pre id="logPre"></pre></div>
-
-  <script type="module">
-    import * as THREE from 'three';
-    import { MindARThree } from 'mindar-image-three';
-
-    // ====== CONFIG: เปลี่ยน path ให้ตรงโปรเจคของคุณ ======
-    const IMAGE_TARGET_SRC = 'AR_Marker/targets.mind'; // <-- เปลี่ยนเป็น path จริง
-    // ======================================================
-
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const container = document.getElementById('container');
-    const dbgPreviewWrap = document.getElementById('dbgPreview');
-    const dbgVideo = dbgPreviewWrap.querySelector('video');
-    const logBox = document.getElementById('logBox');
-    const logPre = document.getElementById('logPre');
-
-    let mindarThree = null;
-    let renderer = null;
-    let scene = null;
-    let camera = null;
-    let anchor = null;
-    let tmpStream = null;
-    let diagVideoElement = null;
-
-    // small helper to append both console and on-screen log
-    function logOnScreen(...args){
-      const text = args.map(a => (typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a))).join(' ');
-      console.log(...args);
-      logBox.style.display = 'block';
-      logPre.textContent = (logPre.textContent ? logPre.textContent + '\n' : '') + text;
-      // keep scroll to bottom
-      logBox.scrollTop = logBox.scrollHeight;
-    }
-
-    // diagnostic + start flow
-    async function startDiagnosticAndMindAR(){
-      startBtn.disabled = true;
-      logOnScreen('[diag] Start pressed — running diagnostics...');
-
-      // 1) enumerateDevices
-      if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices){
-        logOnScreen('[diag] navigator.mediaDevices.enumerateDevices not supported');
-      } else {
-        try{
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          logOnScreen('[diag] enumerateDevices ->', devices);
-          const videoInputs = devices.filter(d => d.kind === 'videoinput');
-          logOnScreen('[diag] video inputs count:', videoInputs.length);
-          videoInputs.forEach((d,i) => logOnScreen(`[diag] video[${i}] id=${d.deviceId} label="${d.label}"`));
-        }catch(e){
-          logOnScreen('[diag] enumerateDevices error:', e.message || e);
-        }
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+        "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
       }
+    }
+    </script>
 
-      // 2) quick direct getUserMedia test (this will trigger permission prompt if needed)
-      try{
-        logOnScreen('[diag] requesting direct getUserMedia({video:true}) to verify stream availability...');
-        tmpStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        logOnScreen('[diag] getUserMedia direct SUCCESS — tracks:', tmpStream.getTracks().map(t=>t.kind + '/' + t.label));
-        // show small debug preview bottom-right
-        try{
-          dbgVideo.srcObject = tmpStream;
-          dbgPreviewWrap.style.display = 'block';
-          dbgVideo.muted = true;
-          dbgVideo.play().catch(()=>{});
-          logOnScreen('[diag] small preview started (bottom-right)');
-        }catch(e){
-          logOnScreen('[diag] could not attach preview video element:', e);
+    <script type="module">
+      import * as THREE from 'three';
+      import { MindARThree } from 'mindar-image-three';
+      // *** เพิ่ม import สำหรับโหลดโมเดล GLB ***
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+      // 3. เริ่มต้น MindAR
+      const mindarThree = new MindARThree({
+        container: document.querySelector("#container"),
+        // *** เปลี่ยนเป็นไฟล์ .mind ของคุณ ***
+        imageTargetSrc: "AR_Marker/targets.mind" 
+      });
+      const {renderer, scene, camera} = mindarThree;
+
+      // 4. สร้าง Anchor (ตัวยึด Marker)
+      const anchor = mindarThree.addAnchor(0); // 0 = Marker ตัวแรกในไฟล์ .mind
+
+      // 5. โหลดวิดีโอ (จาก HTML)
+      const video = document.querySelector("#networkVideo");
+      const videoTexture = new THREE.VideoTexture(video);
+      const videoGeometry = new THREE.PlaneGeometry(1, 0.56); // ขนาดแผ่นสี่เหลี่ยม
+      const videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+      const videoMesh = new THREE.Mesh(videoGeometry, videoMaterial);
+      videoMesh.position.set(0, 0.5, 0); // ตั้งตำแหน่งวิดีโอ (เหนือโมเดลเล็กน้อย)
+      anchor.group.add(videoMesh);
+
+      // 6. โหลดโมเดล (GLB)
+      const loader = new GLTFLoader();
+      loader.load(
+        // *** เปลี่ยนเป็นไฟล์โมเดลของคุณ ***
+        "Job/Network/network-model.glb",
+        (gltf) => {
+          gltf.scene.scale.set(0.2, 0.2, 0.2); // ปรับขนาด
+          gltf.scene.position.set(0, 0, 0);   // ตั้งตำแหน่ง (ที่จุด 0,0,0 ของ Marker)
+          anchor.group.add(gltf.scene); // เพิ่มโมเดลเข้าไปใน Anchor
         }
-      }catch(err){
-        logOnScreen('[diag] getUserMedia direct FAILED:', err.name || err.message || err);
-        alert('Diagnostic: getUserMedia direct failed: ' + (err.message || err.name));
-        startBtn.disabled = false;
-        return; // stop here — if direct getUserMedia fails, MindAR จะไม่ work either
-      }
+      );
 
-      // 3) create MindAR and start (will also request camera if not already)
-      try{
-        logOnScreen('[diag] creating MindAR instance (imageTargetSrc=' + IMAGE_TARGET_SRC + ')');
-        mindarThree = new MindARThree({
-          container: container,
-          imageTargetSrc: IMAGE_TARGET_SRC,
-        });
-        renderer = mindarThree.renderer;
-        scene = mindarThree.scene;
-        camera = mindarThree.camera;
-
-        // quick check: renderer.domElement should be a canvas
-        logOnScreen('[diag] renderer.domElement exists?', !!(mindarThree && mindarThree.renderer && mindarThree.renderer.domElement));
-        logOnScreen('[diag] renderer.domElement:', mindarThree.renderer ? mindarThree.renderer.domElement : null);
-
-        anchor = mindarThree.addAnchor(0);
-
-        // debug: add a helper plane so we can see anchor area if marker found
-        const geo = new THREE.PlaneGeometry(1, 0.6);
-        const mat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent:true, opacity:0.25, side:THREE.DoubleSide });
-        const plane = new THREE.Mesh(geo, mat);
-        plane.visible = false;
-        anchor.group.add(plane);
-
-        anchor.onTargetFound = () => {
-          logOnScreen('[diag] anchor.onTargetFound fired');
-          plane.visible = true;
-          // notify simple alert + on-screen toast-like log
-          alert('Marker ถูกพบ (diagnostic)');
-          logOnScreen('[diag] Marker found -> showing plane');
-        };
-        anchor.onTargetLost = () => {
-          logOnScreen('[diag] anchor.onTargetLost fired');
-          plane.visible = false;
-        };
-
-        // Start MindAR (this will request camera permission if not already granted)
-        logOnScreen('[diag] calling mindarThree.start() — this should start rendering camera into canvas');
+      // 7. ปุ่มควบคุม (Start/Stop)
+      const start = async() => {
         await mindarThree.start();
-        logOnScreen('[diag] mindarThree.start() resolved (mindar started)');
-
-        // ensure canvas sizing (extra safety)
-        if(renderer && renderer.domElement){
-          renderer.domElement.style.width = '100%';
-          renderer.domElement.style.height = '100%';
-          renderer.setSize(window.innerWidth, window.innerHeight);
-          logOnScreen('[diag] adjusted renderer.domElement size and called renderer.setSize');
-        }
-
-        // set animation loop
         renderer.setAnimationLoop(() => {
           renderer.render(scene, camera);
         });
-
-        // UI
-        stopBtn.disabled = false;
-        startBtn.textContent = 'AR กำลังทำงาน (diagnostic)';
-        logOnScreen('[diag] AR running — look for "Marker found" alert / check console for logs');
-      }catch(merr){
-        logOnScreen('[diag] mindarThree.start() ERROR:', merr);
-        alert('mindarThree.start() failed: ' + (merr.message || merr.name || merr));
-        // keep debug preview for inspection
-        startBtn.disabled = false;
       }
-    }
 
-    async function stopAll(){
-      // stop MindAR
-      try{
-        if(mindarThree){
-          await mindarThree.stop();
-          mindarThree = null;
-        }
-      }catch(e){
-        console.warn('stop mindar error', e);
+      const startButton = document.querySelector("#startButton");
+      const stopButton = document.querySelector("#stopButton");
+
+      startButton.addEventListener("click", () => {
+        video.play(); // *** สั่งให้วิดีโอเริ่มเล่น ***
+        start();
+      });
+      stopButton.addEventListener("click", () => {
+        mindarThree.stop();
+        mindarThree.renderer.setAnimationLoop(null);
+      });
+    </script>
+
+    <style>
+      body {
+        margin: 0;
       }
-      // stop tmp stream
-      if(tmpStream){
-        tmpStream.getTracks().forEach(t => t.stop());
-        tmpStream = null;
+      #container {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+        overflow: hidden;
       }
-      // hide preview
-      dbgVideo.srcObject = null;
-      dbgPreviewWrap.style.display = 'none';
-      // reset UI
-      stopBtn.disabled = true;
-      startBtn.disabled = false;
-      startBtn.textContent = 'Start AR (diagnostic)';
-      logOnScreen('[diag] stopped all (MindAR & streams)');
-    }
-
-    // UI bindings
-    startBtn.addEventListener('click', () => {
-      // Show console instruction
-      logOnScreen('--- PLEASE COPY/PASTE ALL CONSOLE OUTPUT IF PROBLEM PERSISTS ---');
-      startDiagnosticAndMindAR();
-    });
-    stopBtn.addEventListener('click', stopAll);
-
-    // Resize handling: keep renderer sizing if present
-    window.addEventListener('resize', () => {
-      if(mindarThree && mindarThree.renderer){
-        mindarThree.renderer.setSize(window.innerWidth, window.innerHeight);
-        logOnScreen('[diag] window resized -> renderer.setSize called');
+      #control {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 2;
       }
-    });
+      /* *** ซ่อนวิดีโอต้นฉบับไว้ *** */
+      #networkVideo {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="control">
+      <button id="startButton">Start</button>
+      <button id="stopButton">Stop</button>
+    </div>
+    <div id="container">
+    </div>
 
-    // Quick compatibility check
-    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-      alert('Browser ไม่รองรับ getUserMedia — กรุณาใช้ Chrome/Edge/Firefox บน HTTPS หรือ localhost');
-      logOnScreen('[diag] navigator.mediaDevices or getUserMedia not available');
-      startBtn.disabled = true;
-    }
-  </script>
-</body>
+    <video 
+      id="networkVideo"
+      src="Job/Network/video-network.mp4"
+      muted
+      loop
+      playsinline>
+    </video>
+  </body>
 </html>
