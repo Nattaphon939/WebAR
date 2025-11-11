@@ -1,271 +1,171 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>WebAR — Computer Demo (MindAR + Sticky + Smoothing + Permissions)</title>
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AR Career Experience</title>
 
-  <!-- A-Frame -->
-  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
-  <!-- MindAR (image tracking for A-Frame) -->
-  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-aframe.prod.js"></script>
+    <!-- MindAR + A-Frame -->
+    <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-aframe.prod.js"></script>
 
-  <style>
-    html,body{ height:100%; margin:0; }
-    #app{ width:100%; height:100%; position:relative; overflow:hidden; background:#000; }
+    <style>
+      body, html {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        font-family: "Prompt", sans-serif;
+        background-color: #f9f9f9;
+        color: #222;
+      }
 
-    /* Simple overlay UI */
-    .overlay {
-      position:absolute; left:0; right:0; top:0; bottom:0; display:flex; align-items:center; justify-content:center; z-index:9;
-    }
-    #startBtn{
-      background:linear-gradient(90deg,#2b7cff,#0ea5ff); color:#fff; border:none; padding:14px 22px; font-size:18px; border-radius:10px; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,0.3);
-    }
-    #hint{ position:absolute; bottom:18px; left:12px; right:12px; text-align:center; color:#fff; font-size:14px; opacity:0.9 }
+      #start-screen {
+        position: fixed;
+        inset: 0;
+        background: white;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 10;
+      }
 
-    /* small status area */
-    #status{ position:absolute; top:12px; left:12px; color:#fff; backdrop-filter: blur(6px); padding:8px 10px; border-radius:8px; font-size:13px; }
-    #permDetails{ position:absolute; top:12px; right:12px; color:#fff; background:rgba(0,0,0,0.25); padding:8px 10px; border-radius:8px; font-size:13px; }
-  </style>
-</head>
-<body>
-  <div id="app">
+      #start-screen h1 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+      }
 
-    <!-- Hidden video element used as texture for <a-video> -->
-    <video id="compVideo" playsinline controls="false" crossorigin="anonymous" webkit-playsinline="true" style="display:none">
-      <source src="Computer/Computer.mp4" type="video/mp4">
-    </video>
+      #start-button {
+        padding: 0.7rem 1.5rem;
+        font-size: 1rem;
+        background: #222;
+        color: white;
+        border: none;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: 0.3s;
+      }
 
-    <!-- Overlay UI to get user gesture (required on mobile to unlock camera + video) -->
-    <div class="overlay" id="overlay">
-      <div style="text-align:center">
-        <h2 style="color:#fff; margin:0 0 8px 0">AR Computer Demo</h2>
-        <button id="startBtn">Start AR</button>
-        <div id="hint">Allow camera when prompted, then point your camera at the marker (AR_Marker/targets.mind)</div>
-      </div>
+      #start-button:hover {
+        background: #555;
+      }
+
+      #scan-frame {
+        position: fixed;
+        inset: 0;
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 5;
+      }
+
+      #scan-box {
+        width: 60vmin;
+        height: 60vmin;
+        border: 3px solid #00c6a7;
+        border-radius: 12px;
+        box-shadow: 0 0 30px rgba(0,198,167,0.3);
+        animation: pulse 2s infinite ease-in-out;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- หน้ากดเริ่ม -->
+    <div id="start-screen">
+      <h1>เริ่มต้น AR Experience</h1>
+      <button id="start-button">Start AR</button>
     </div>
 
-    <div id="status">Status: waiting</div>
-    <div id="permDetails">Permissions: <span id="permCamera">?</span> camera · <span id="permDO">?</span> device-orientation</div>
+    <!-- กรอบสแกน -->
+    <div id="scan-frame">
+      <div id="scan-box"></div>
+    </div>
 
-    <!-- A-Frame + MindAR scene
-         - filterMinCF & filterBeta: MindAR built-in smoothing
-         - embedded: run in page
-         - autoStart: false so we control start after permission flow
-    -->
-    <a-scene vr-mode-ui="enabled: false"
-             embedded
-             mindar-image="imageTargetSrc: ./AR_Marker/targets.mind; filterMinCF: 0.001; filterBeta: 0.02; autoStart: false;">
+    <!-- AR Scene -->
+    <a-scene
+      id="ar-scene"
+      mindar-image="imageTargetSrc: ./AR_Marker/targets.mind; autoStart: false; uiScanning: false;"
+      color-space="sRGB"
+      embedded
+      renderer="colorManagement: true; physicallyCorrectLights;"
+      vr-mode-ui="enabled: false"
+      device-orientation-permission-ui="enabled: false"
+    >
+      <a-assets>
+        <video
+          id="video-computer"
+          src="./Computer/Computer.mp4"
+          preload="auto"
+          loop
+          crossorigin="anonymous"
+          webkit-playsinline
+          playsinline
+        ></video>
+        <a-asset-item id="model-computer" src="./Computer/Computer-Model.glb"></a-asset-item>
+      </a-assets>
 
-      <!-- mindar target entity (index 0) -->
-      <a-entity id="target" mindar-image-target="targetIndex: 0">
-        <!-- anchor proxy: an empty entity we use to sample marker pose -->
-        <a-entity id="anchorProxy" position="0 0 0"></a-entity>
+      <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-        <!-- Computer model: initially invisible, will be made visible after stability check -->
-        <a-entity id="computerModel"
-                  gltf-model="url(Computer/Computer-Model.glb)"
-                  scale="0.6 0.6 0.6"
-                  rotation="0 0 0"
-                  visible="false">
-        </a-entity>
-
-        <!-- Video as an A-Frame video entity (texture from hidden <video>) -->
-        <a-video id="computerVideo"
-                 src="#compVideo"
-                 width="1.4"
-                 height="0.78"
-                 position="0 0.12 0.8"
-                 rotation="0 180 0"
-                 visible="false"
-                 playsinline>
-        </a-video>
-
+      <a-entity mindar-image-target="targetIndex: 0">
+        <a-video
+          src="#video-computer"
+          position="0 0 0"
+          width="1"
+          height="0.6"
+          rotation="0 0 0"
+        ></a-video>
+        <a-gltf-model
+          src="#model-computer"
+          position="0 -0.3 0"
+          scale="0.5 0.5 0.5"
+          rotation="0 0 0"
+        ></a-gltf-model>
       </a-entity>
-
-      <!-- camera -->
-      <a-entity camera></a-entity>
     </a-scene>
 
     <script>
-      (function(){
-        const startBtn = document.getElementById('startBtn');
-        const overlay = document.getElementById('overlay');
-        const status = document.getElementById('status');
-        const permCameraEl = document.getElementById('permCamera');
-        const permDOEl = document.getElementById('permDO');
+      const startButton = document.getElementById("start-button");
+      const startScreen = document.getElementById("start-screen");
+      const scanFrame = document.getElementById("scan-frame");
+      const scene = document.querySelector("#ar-scene");
+      const video = document.querySelector("#video-computer");
 
-        const compVideo = document.getElementById('compVideo');
-        const scene = document.querySelector('a-scene');
-        const target = document.getElementById('target');
-        const anchorProxy = document.getElementById('anchorProxy');
-        const model = document.getElementById('computerModel');
-        const aVideo = document.getElementById('computerVideo');
-
-        // Configs you can tweak
-        const STABILITY_MS = 700;      // time marker must be stable before showing
-        const LERP_FACTOR = 0.15;      // smoothing lerp (0.05..0.25)
-        const STICKY_MODE = true;      // keep model visible when marker lost
-
-        let stableTimer = null;
-        let isTracking = false;
-        let isStable = false;
-
-        // ----------------------------------
-        // Permission helpers
-        // ----------------------------------
-        async function requestCameraPermission(){
-          // Try to request camera permission using getUserMedia. We'll stop tracks after permission is granted.
-          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            permCameraEl.textContent = 'unsupported';
-            return false;
-          }
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-            // Immediately stop tracks to release camera; MindAR will open camera when it starts.
-            stream.getTracks().forEach(t => t.stop());
-            permCameraEl.textContent = 'granted';
-            return true;
-          } catch (e) {
-            console.warn('Camera permission denied or error', e);
-            permCameraEl.textContent = 'denied';
-            return false;
-          }
-        }
-
-        async function requestDeviceOrientationPermission(){
-          // Some iOS versions require explicit permission for DeviceOrientationEvent
-          if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
-            try{
-              const res = await DeviceOrientationEvent.requestPermission();
-              permDOEl.textContent = (res === 'granted') ? 'granted' : 'denied';
-              return res === 'granted';
-            }catch(err){
-              console.warn('DeviceOrientation permission request failed', err);
-              permDOEl.textContent = 'denied';
-              return false;
+      startButton.addEventListener("click", async () => {
+        try {
+          // ขออนุญาตกล้อง
+          await navigator.mediaDevices.getUserMedia({ video: true });
+          // ขออนุญาต motion (บางอุปกรณ์ iOS)
+          if (typeof DeviceOrientationEvent.requestPermission === "function") {
+            try {
+              await DeviceOrientationEvent.requestPermission();
+            } catch (err) {
+              console.warn("motion permission:", err);
             }
-          } else {
-            // Not required / not supported
-            permDOEl.textContent = 'n/a';
-            return true;
           }
+
+          // เริ่ม AR
+          startScreen.style.display = "none";
+          scanFrame.style.display = "flex";
+          scene.components["mindar-image"].start();
+
+          scene.addEventListener("targetFound", () => {
+            video.play();
+          });
+
+          scene.addEventListener("targetLost", () => {
+            video.pause();
+          });
+        } catch (err) {
+          alert("ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตในเบราว์เซอร์");
+          console.error(err);
         }
-
-        async function unlockVideoAutoplay(){
-          try{
-            compVideo.muted = true;
-            await compVideo.play();
-            compVideo.pause();
-            compVideo.muted = false; // unmute if you want (browsers may still block audible autoplay)
-            return true;
-          }catch(e){
-            console.warn('Autoplay unlock failed', e);
-            return false;
-          }
-        }
-
-        async function requestAllPermissions(){
-          status.textContent = 'Status: requesting permissions...';
-
-          // Request DeviceOrientation first (iOS may block camera prompt until this is resolved)
-          const doPerm = await requestDeviceOrientationPermission();
-
-          // Request camera
-          const camPerm = await requestCameraPermission();
-
-          // Unlock video playback to satisfy autoplay policies
-          await unlockVideoAutoplay();
-
-          return { camera: camPerm, deviceOrientation: doPerm };
-        }
-
-        // ----------------------------------
-        // Smoothing / stability logic
-        // ----------------------------------
-        const anchorObj = anchorProxy.object3D;
-        const modelObj = model.object3D;
-
-        function smoothingLoop(){
-          if (isTracking && isStable) {
-            modelObj.position.lerp(anchorObj.position, LERP_FACTOR);
-            modelObj.quaternion.slerp(anchorObj.quaternion, LERP_FACTOR);
-          }
-          requestAnimationFrame(smoothingLoop);
-        }
-        requestAnimationFrame(smoothingLoop);
-
-        // MindAR events
-        target.addEventListener('targetFound', () => {
-          status.textContent = 'Status: target found — stabilizing...';
-          isTracking = true;
-          if (stableTimer) clearTimeout(stableTimer);
-          stableTimer = setTimeout(()=>{
-            isStable = true;
-            model.setAttribute('visible', 'true');
-            aVideo.setAttribute('visible', 'true');
-            if (compVideo.paused) {
-              compVideo.currentTime = 0;
-              const p = compVideo.play();
-              if (p && p.catch) p.catch(()=>{});
-            }
-            status.textContent = 'Status: stable — model & video visible';
-          }, STABILITY_MS);
-        });
-
-        target.addEventListener('targetLost', () => {
-          status.textContent = 'Status: target lost';
-          isTracking = false;
-          if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
-          isStable = false;
-
-          if (STICKY_MODE) {
-            status.textContent = 'Status: target lost — sticky mode ON (model kept at last known pose)';
-          } else {
-            model.setAttribute('visible', 'false');
-            aVideo.setAttribute('visible', 'false');
-            if (!compVideo.paused) compVideo.pause();
-          }
-        });
-
-        // Start AR flow with permission requests
-        startBtn.addEventListener('click', async () => {
-          startBtn.disabled = true;
-          status.textContent = 'Status: requesting permissions...';
-
-          const perms = await requestAllPermissions();
-
-          if (!perms.camera) {
-            status.textContent = 'Status: camera permission is required. Please allow camera and reload.';
-            startBtn.disabled = false;
-            overlay.style.display = 'flex';
-            return;
-          }
-
-          // Hide overlay and start MindAR
-          overlay.style.display = 'none';
-          status.textContent = 'Status: starting AR — allow camera permission dialog if shown';
-
-          try {
-            if (scene && scene.systems && scene.systems['mindar-image']){
-              await scene.systems['mindar-image'].start();
-            } else if (scene && scene.components && scene.components['mindar-image']){
-              await scene.components['mindar-image'].start();
-            }
-            status.textContent = 'Status: AR running — point camera at marker';
-          } catch(err){
-            console.warn('MindAR start() failed or unavailable:', err);
-            status.textContent = 'Status: AR start failed — try reload or test on a supported browser';
-            startBtn.disabled = false;
-            overlay.style.display = 'flex';
-          }
-        });
-
-        // Pause video on pagehide
-        window.addEventListener('pagehide', ()=>{ if (!compVideo.paused) compVideo.pause(); });
-
-      })();
+      });
     </script>
-  </div>
-</body>
+  </body>
 </html>
