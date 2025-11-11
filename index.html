@@ -1,242 +1,67 @@
-<!DOCTYPE html>
-<html lang="th">
+<html>
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AR Career Experience</title>
-
-    <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-aframe.prod.js"></script>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script type="importmap">
+    {
+      "imports": {
+	"three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+	"three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+	"mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+      }
+    }
+    </script>
+    <script type="module">
+      import * as THREE from 'three';
+      import { MindARThree } from 'mindar-image-three';
+      const mindarThree = new MindARThree({
+	container: document.querySelector("#container"),
+	imageTargetSrc: "https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/image-tracking/assets/card-example/card.mind"
+      });
+      const {renderer, scene, camera} = mindarThree;
+      const anchor = mindarThree.addAnchor(0);
+      const geometry = new THREE.PlaneGeometry(1, 0.55);
+      const material = new THREE.MeshBasicMaterial( {color: 0x00ffff, transparent: true, opacity: 0.5} );
+      const plane = new THREE.Mesh( geometry, material );
+      anchor.group.add(plane);
+      const start = async() => {
+	await mindarThree.start();
+	renderer.setAnimationLoop(() => {
+	  renderer.render(scene, camera);
+	});
+      }
+      const startButton = document.querySelector("#startButton");
+      startButton.addEventListener("click", () => {
+	start();
+      });
+      stopButton.addEventListener("click", () => {
+	mindarThree.stop();
+	mindarThree.renderer.setAnimationLoop(null);
+      });
+    </script>
     <style>
-      body, html {
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        background-color: #f9f9f9;
-        font-family: "Prompt", sans-serif;
+      body {
+	margin: 0;
       }
-
-      #start-screen {
-        position: fixed;
-        inset: 0;
-        background: #fff;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        z-index: 10;
+      #container {
+	width: 100vw;
+	height: 100vh;
+	position: relative;
+	overflow: hidden;
       }
-
-      #start-screen h1 {
-        font-size: 1.4rem;
-        font-weight: 600;
-        margin-bottom: 1rem;
-        color: #333;
+      #control {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 2;
       }
-
-      #start-button {
-        padding: 0.8rem 1.8rem;
-        font-size: 1rem;
-        background: #111;
-        color: white;
-        border: none;
-        border-radius: 999px;
-        cursor: pointer;
-        transition: 0.3s;
-      }
-
-      #start-button:hover {
-        background: #444;
-      }
-
-      #scan-frame {
-        position: fixed;
-        inset: 0;
-        display: none;
-        justify-content: center;
-        align-items: center;
-        z-index: 7;
-      }
-
-      #scan-box {
-        width: 60vmin;
-        height: 60vmin;
-        border: 3px solid #00c6a7;
-        border-radius: 12px;
-        box-shadow: 0 0 30px rgba(0,198,167,0.3);
-        animation: pulse 2s infinite ease-in-out;
-      }
-
-      @keyframes pulse {
-        0%, 100% { opacity: 0.7; }
-        50% { opacity: 1; }
-      }
-      /* full-screen blur overlay that blurs everything behind it */
-      #blur-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 5;
-        pointer-events: none;
-        -webkit-backdrop-filter: blur(10px);
-        backdrop-filter: blur(10px);
-        transition: opacity 200ms ease;
-        opacity: 0;
-        display: none;
-      }
-
-      /* When visible, show the blur */
-      #blur-overlay.visible {
-        display: block;
-        opacity: 1;
-      }
-
-      /* Ensure the AR scene canvas sits behind overlays */
-      a-scene {
-        position: fixed;
-        inset: 0;
-        z-index: 0;
-      }
-      /* permission error UI removed (silent handling) */
     </style>
   </head>
   <body>
-    <div id="start-screen">
-      <h1>เริ่มต้น AR Experience</h1>
-      <button id="start-button">Start AR</button>
+    <div id="control">
+      <button id="startButton">Start</button>
+      <button id="stopButton">Stop</button>
     </div>
-
-    <div id="scan-frame">
-      <div id="scan-box"></div>
+    <div id="container">
     </div>
-
-    <div id="blur-overlay" aria-hidden="true"></div>
-
-    <!-- permission UI removed; Start AR will request permissions on click -->
-
-    <a-scene
-      id="ar-scene"
-      mindar-image="imageTargetSrc: ./AR_Marker/targets.mind; autoStart: false; uiScanning: false;"
-      color-space="sRGB"
-      embedded
-      renderer="colorManagement: true; physicallyCorrectLights;"
-      vr-mode-ui="enabled: false"
-      device-orientation-permission-ui="enabled: false"
-    >
-      <a-assets>
-        <video
-          id="video-computer"
-          src="./Computer/Computer.mp4"
-          preload="auto"
-          loop
-          crossorigin="anonymous"
-          playsinline
-          webkit-playsinline
-        ></video>
-        <a-asset-item id="model-computer" src="./Computer/Computer-Model.glb"></a-asset-item>
-      </a-assets>
-
-      <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-
-      <a-entity mindar-image-target="targetIndex: 0">
-        <a-video src="#video-computer" position="0 0 0" width="1" height="0.6"></a-video>
-        <a-gltf-model src="#model-computer" position="0 -0.3 0" scale="0.5 0.5 0.5"></a-gltf-model>
-      </a-entity>
-    </a-scene>
-
-    <script>
-      const startBtn = document.getElementById("start-button");
-      const startScreen = document.getElementById("start-screen");
-      const scanFrame = document.getElementById("scan-frame");
-      const scene = document.querySelector("#ar-scene");
-      const video = document.querySelector("#video-computer");
-      const blurOverlay = document.getElementById("blur-overlay");
-      let mediaStream = null;
-
-      async function requestCameraAndStart() {
-        try {
-          // 🟢 ขออนุญาตกล้อง (ขอ rear camera ถ้ามี)
-          console.log("[start] requesting camera access...");
-          mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
-          console.log("[start] camera stream obtained:", mediaStream);
-
-          if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
-            try {
-              await DeviceOrientationEvent.requestPermission();
-            } catch (err) {
-              console.warn("motion permission denied:", err);
-            }
-          }
-
-          // เริ่ม AR UI — show scan frame with blurred overlay
-          console.log("[start] camera granted; showing scan UI...");
-          startScreen.style.display = "none";
-          blurOverlay.classList.add("visible");
-          scanFrame.style.display = "flex";
-
-          // start MindAR (ensure scene + component ready)
-          console.log("[start] starting MindAR...");
-          await waitForMindARAndStart();
-
-          // event เมื่อ marker เจอ / หาย
-          scene.addEventListener("targetFound", () => video.play());
-          scene.addEventListener("targetLost", () => video.pause());
-        } catch (err) {
-          // Silent failure per user request: log to console and reset UI
-          console.error("[start] error:", err.name, err.message);
-          if (mediaStream) {
-            mediaStream.getTracks().forEach(t => t.stop());
-            mediaStream = null;
-          }
-          startScreen.style.display = "flex";
-          scanFrame.style.display = "none";
-          blurOverlay.classList.remove("visible");
-        }
-      }
-
-      startBtn.addEventListener("click", requestCameraAndStart);
-
-      // Wait until the A-Frame scene is loaded and mindar component is available,
-      // then call its start(). Will timeout after a short period and throw.
-      async function waitForMindARAndStart(timeout = 6000) {
-        console.log("[debug] waitForMindARAndStart: waiting for scene to load...");
-        if (!scene) throw new Error("a-scene element not found");
-
-        // wait for scene loaded if necessary
-        if (!scene.hasLoaded) {
-          await new Promise((resolve) => {
-            const onLoaded = () => {
-              scene.removeEventListener('loaded', onLoaded);
-              resolve();
-            };
-            scene.addEventListener('loaded', onLoaded);
-            // fallback in case 'loaded' already fired
-            setTimeout(() => {
-              if (scene.hasLoaded) resolve();
-            }, 50);
-          });
-        }
-
-        console.log("[debug] scene loaded; waiting for mindar component...");
-
-        const startAt = Date.now();
-        while (Date.now() - startAt < timeout) {
-          try {
-            const comp = scene.components && scene.components['mindar-image'];
-            if (comp && typeof comp.start === 'function') {
-              console.log("[debug] mindar-image component ready — starting...");
-              await comp.start();
-              console.log("[debug] mindar started");
-              return;
-            }
-          } catch (e) {
-            console.warn('[debug] waiting for mindar component error', e);
-          }
-          // small delay before next check
-          await new Promise(r => setTimeout(r, 200));
-        }
-        throw new Error('MindAR component not ready (timeout)');
-      }
-    </script>
   </body>
 </html>
