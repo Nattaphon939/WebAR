@@ -19,7 +19,7 @@
       body {
         margin: 0;
         font-family: "Poppins", sans-serif;
-        background: #fafafa;
+        background: #000;
         overflow: hidden;
       }
 
@@ -30,7 +30,6 @@
         overflow: hidden;
       }
 
-      /* ปุ่มเริ่ม AR */
       #startButton {
         position: absolute;
         top: 50%;
@@ -43,15 +42,9 @@
         border-radius: 10px;
         font-size: 1.1em;
         cursor: pointer;
-        z-index: 5;
-        transition: 0.3s;
+        z-index: 10;
       }
 
-      #startButton:hover {
-        background: #333;
-      }
-
-      /* กรอบสแกน */
       #scan-frame {
         position: absolute;
         top: 50%;
@@ -61,8 +54,8 @@
         border: 2px solid #00ffcc;
         border-radius: 16px;
         transform: translate(-50%, -50%);
-        opacity: 0.6;
-        z-index: 3;
+        opacity: 0.7;
+        z-index: 5;
         display: none;
         animation: pulse 2s infinite ease-in-out;
       }
@@ -91,7 +84,7 @@
   <body>
     <div id="container"></div>
     <div id="scan-frame"></div>
-    <button id="startButton">Start AR</button>
+    <button id="startButton">เริ่มต้นใช้งาน AR</button>
 
     <video
       id="networkVideo"
@@ -99,6 +92,7 @@
       muted
       loop
       playsinline
+      crossorigin="anonymous"
     ></video>
 
     <script type="module">
@@ -106,8 +100,12 @@
       import { MindARThree } from "mindar-image-three";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-      window.addEventListener("DOMContentLoaded", () => {
+      window.addEventListener("DOMContentLoaded", async () => {
+        const startButton = document.querySelector("#startButton");
+        const scanFrame = document.querySelector("#scan-frame");
         const container = document.querySelector("#container");
+
+        // โหลด MindAR
         const mindarThree = new MindARThree({
           container: container,
           imageTargetSrc: "AR_Marker/targets.mind",
@@ -116,7 +114,7 @@
         const { renderer, scene, camera } = mindarThree;
         const anchor = mindarThree.addAnchor(0);
 
-        // 🎥 โหลดวิดีโอ
+        // -------- วิดีโอ --------
         const video = document.querySelector("#networkVideo");
         const videoTexture = new THREE.VideoTexture(video);
         const videoGeometry = new THREE.PlaneGeometry(1, 0.56);
@@ -128,69 +126,48 @@
         videoMesh.position.set(0, 0.5, 0);
         anchor.group.add(videoMesh);
 
-        // 🧍 โหลดโมเดล Network
+        // -------- โมเดล Network --------
         const loader = new GLTFLoader();
-        loader.load("Job/Network/network-model.glb", (gltf) => {
-          gltf.scene.scale.set(0.25, 0.25, 0.25);
-          gltf.scene.position.set(0, 0, 0);
-          anchor.group.add(gltf.scene);
-        });
+        loader.load(
+          "Job/Network/network-model.glb",
+          (gltf) => {
+            gltf.scene.scale.set(0.25, 0.25, 0.25);
+            gltf.scene.position.set(0, -0.2, 0);
+            anchor.group.add(gltf.scene);
+          },
+          undefined,
+          (error) => {
+            console.error("โหลดโมเดลล้มเหลว:", error);
+          }
+        );
 
-        // ---------- ระบบกันสั่น ----------
-        const smoothedGroup = new THREE.Group();
-        scene.add(smoothedGroup);
-        smoothedGroup.add(anchor.group);
-        let lastMatrix = new THREE.Matrix4();
-        const lerpFactor = 0.15;
-
+        // -------- เมื่อเจอ Marker --------
         anchor.onTargetFound = () => {
-          document.querySelector("#scan-frame").style.display = "none";
+          console.log("✅ Marker Found!");
+          scanFrame.style.display = "none";
           video.play();
         };
+
         anchor.onTargetLost = () => {
+          console.log("❌ Marker Lost");
           video.pause();
         };
 
-        const start = async () => {
-          await mindarThree.start();
-          renderer.setAnimationLoop(() => {
-            if (anchor.group.visible) {
-              const currentMatrix = anchor.group.matrixWorld.clone();
-              if (lastMatrix) {
-                smoothedGroup.matrixWorld
-                  .copy(lastMatrix)
-                  .lerp(currentMatrix, lerpFactor);
-              } else {
-                smoothedGroup.matrixWorld.copy(currentMatrix);
-              }
-              lastMatrix.copy(smoothedGroup.matrixWorld);
-
-              smoothedGroup.position.setFromMatrixPosition(
-                smoothedGroup.matrixWorld
-              );
-              smoothedGroup.quaternion.setFromRotationMatrix(
-                smoothedGroup.matrixWorld
-              );
-              smoothedGroup.scale.setFromMatrixScale(smoothedGroup.matrixWorld);
-              smoothedGroup.visible = true;
-            } else {
-              smoothedGroup.visible = false;
-            }
-
-            renderer.render(scene, camera);
-          });
-        };
-
-        // 🔘 ปุ่มเริ่ม AR + ขอสิทธิ์กล้อง
-        const startButton = document.querySelector("#startButton");
+        // -------- เริ่มระบบ --------
         startButton.addEventListener("click", async () => {
           try {
             await navigator.mediaDevices.getUserMedia({ video: true });
-            document.querySelector("#scan-frame").style.display = "block";
             startButton.style.display = "none";
-            await start();
+            scanFrame.style.display = "block";
+
+            await mindarThree.start();
+
+            renderer.setAnimationLoop(() => {
+              renderer.render(scene, camera);
+            });
           } catch (err) {
-            alert("❗ กรุณาอนุญาตให้เข้าถึงกล้องเพื่อใช้งาน AR");
+            alert("⚠️ กรุณาอนุญาตให้เข้าถึงกล้องเพื่อใช้งาน AR");
+            console.error(err);
           }
         });
       });
