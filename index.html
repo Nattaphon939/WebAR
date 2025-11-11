@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>WebAR — Computer Demo (MindAR + Sticky + Smoothing)</title>
+  <title>WebAR — Computer Demo (MindAR + Sticky + Smoothing + Permissions)</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
@@ -25,6 +25,7 @@
 
     /* small status area */
     #status{ position:absolute; top:12px; left:12px; color:#fff; backdrop-filter: blur(6px); padding:8px 10px; border-radius:8px; font-size:13px; }
+    #permDetails{ position:absolute; top:12px; right:12px; color:#fff; background:rgba(0,0,0,0.25); padding:8px 10px; border-radius:8px; font-size:13px; }
   </style>
 </head>
 <body>
@@ -45,11 +46,12 @@
     </div>
 
     <div id="status">Status: waiting</div>
+    <div id="permDetails">Permissions: <span id="permCamera">?</span> camera · <span id="permDO">?</span> device-orientation</div>
 
     <!-- A-Frame + MindAR scene
          - filterMinCF & filterBeta: MindAR built-in smoothing
          - embedded: run in page
-         - device-orientation-permission-ui: disabled because we use custom start button
+         - autoStart: false so we control start after permission flow
     -->
     <a-scene vr-mode-ui="enabled: false"
              embedded
@@ -90,6 +92,8 @@
         const startBtn = document.getElementById('startBtn');
         const overlay = document.getElementById('overlay');
         const status = document.getElementById('status');
+        const permCameraEl = document.getElementById('permCamera');
+        const permDOEl = document.getElementById('permDO');
 
         const compVideo = document.getElementById('compVideo');
         const scene = document.querySelector('a-scene');
@@ -106,46 +110,104 @@
         let stableTimer = null;
         let isTracking = false;
         let isStable = false;
-        let lastAnchorMatrix = null;
 
-        // Utility: convert Object3D position/rotation copy using three.js objects
-        // We'll use object3D references from entities for lerp
+        // ----------------------------------
+        // Permission helpers
+        // ----------------------------------
+        async function requestCameraPermission(){
+          // Try to request camera permission using getUserMedia. We'll stop tracks after permission is granted.
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            permCameraEl.textContent = 'unsupported';
+            return false;
+          }
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+            // Immediately stop tracks to release camera; MindAR will open camera when it starts.
+            stream.getTracks().forEach(t => t.stop());
+            permCameraEl.textContent = 'granted';
+            return true;
+          } catch (e) {
+            console.warn('Camera permission denied or error', e);
+            permCameraEl.textContent = 'denied';
+            return false;
+          }
+        }
+
+        async function requestDeviceOrientationPermission(){
+          // Some iOS versions require explicit permission for DeviceOrientationEvent
+          if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+            try{
+              const res = await DeviceOrientationEvent.requestPermission();
+              permDOEl.textContent = (res === 'granted') ? 'granted' : 'denied';
+              return res === 'granted';
+            }catch(err){
+              console.warn('DeviceOrientation permission request failed', err);
+              permDOEl.textContent = 'denied';
+              return false;
+            }
+          } else {
+            // Not required / not supported
+            permDOEl.textContent = 'n/a';
+            return true;
+          }
+        }
+
+        async function unlockVideoAutoplay(){
+          try{
+            compVideo.muted = true;
+            await compVideo.play();
+            compVideo.pause();
+            compVideo.muted = false; // unmute if you want (browsers may still block audible autoplay)
+            return true;
+          }catch(e){
+            console.warn('Autoplay unlock failed', e);
+            return false;
+          }
+        }
+
+        async function requestAllPermissions(){
+          status.textContent = 'Status: requesting permissions...';
+
+          // Request DeviceOrientation first (iOS may block camera prompt until this is resolved)
+          const doPerm = await requestDeviceOrientationPermission();
+
+          // Request camera
+          const camPerm = await requestCameraPermission();
+
+          // Unlock video playback to satisfy autoplay policies
+          await unlockVideoAutoplay();
+
+          return { camera: camPerm, deviceOrientation: doPerm };
+        }
+
+        // ----------------------------------
+        // Smoothing / stability logic
+        // ----------------------------------
         const anchorObj = anchorProxy.object3D;
         const modelObj = model.object3D;
 
-        // smoothing loop: copy anchor position/rotation with lerp
         function smoothingLoop(){
           if (isTracking && isStable) {
-            // position
             modelObj.position.lerp(anchorObj.position, LERP_FACTOR);
-            // rotation: slerp quaternions
             modelObj.quaternion.slerp(anchorObj.quaternion, LERP_FACTOR);
-            // scale copy directly (if you need to change scale dynamically)
-            // modelObj.scale.copy(anchorObj.scale);
           }
           requestAnimationFrame(smoothingLoop);
         }
-
-        // Start smoothing loop immediately (it will only act when isStable true)
         requestAnimationFrame(smoothingLoop);
 
-        // targetFound / targetLost events are emitted on the mindar-image-target entity
+        // MindAR events
         target.addEventListener('targetFound', () => {
-          status.textContent = 'Status: target found — waiting to stabilize...';
+          status.textContent = 'Status: target found — stabilizing...';
           isTracking = true;
-          // clear previous timer
           if (stableTimer) clearTimeout(stableTimer);
-          // start timer to check for stability before showing
           stableTimer = setTimeout(()=>{
             isStable = true;
-            // show model & video
             model.setAttribute('visible', 'true');
             aVideo.setAttribute('visible', 'true');
-            // play video if paused
             if (compVideo.paused) {
-              compVideo.currentTime = 0; // start fresh
+              compVideo.currentTime = 0;
               const p = compVideo.play();
-              if (p && p.catch) p.catch(()=>{ /* autoplay blocked, but user already tapped Start */ });
+              if (p && p.catch) p.catch(()=>{});
             }
             status.textContent = 'Status: stable — model & video visible';
           }, STABILITY_MS);
@@ -158,57 +220,49 @@
           isStable = false;
 
           if (STICKY_MODE) {
-            // keep visible but stop following anchor by setting stable=false
-            // model/video remain visible at last position
             status.textContent = 'Status: target lost — sticky mode ON (model kept at last known pose)';
           } else {
-            // hide immediately
             model.setAttribute('visible', 'false');
             aVideo.setAttribute('visible', 'false');
-            // pause video to save resources
             if (!compVideo.paused) compVideo.pause();
           }
         });
 
-        // Start button logic: needs a user gesture to unlock camera & video playback
+        // Start AR flow with permission requests
         startBtn.addEventListener('click', async () => {
-          try {
-            // Attempt to play video muted briefly to unlock auto-play on mobile
-            compVideo.muted = true;
-            await compVideo.play();
-            compVideo.pause();
-            compVideo.muted = false; // unmute if you want sound (but many browsers block sound autoplay)
-          } catch(e){
-            // ignore — still proceed to start AR permission prompt
-            console.warn('Video unlock failed (ok):', e);
+          startBtn.disabled = true;
+          status.textContent = 'Status: requesting permissions...';
+
+          const perms = await requestAllPermissions();
+
+          if (!perms.camera) {
+            status.textContent = 'Status: camera permission is required. Please allow camera and reload.';
+            startBtn.disabled = false;
+            overlay.style.display = 'flex';
+            return;
           }
 
-          // hide overlay UI
+          // Hide overlay and start MindAR
           overlay.style.display = 'none';
-          status.textContent = 'Status: starting AR — allow camera permission if prompted';
+          status.textContent = 'Status: starting AR — allow camera permission dialog if shown';
 
-          // Start MindAR scene. MindAR's A-Frame component exposes a 'start' method via the scene's system
           try {
-            // try multiple ways to start (compatibility)
             if (scene && scene.systems && scene.systems['mindar-image']){
-              // A-Frame MindAR system
               await scene.systems['mindar-image'].start();
             } else if (scene && scene.components && scene.components['mindar-image']){
               await scene.components['mindar-image'].start();
             }
+            status.textContent = 'Status: AR running — point camera at marker';
           } catch(err){
-            // If start isn't available, there's still a built-in UI; show message
             console.warn('MindAR start() failed or unavailable:', err);
+            status.textContent = 'Status: AR start failed — try reload or test on a supported browser';
+            startBtn.disabled = false;
+            overlay.style.display = 'flex';
           }
-
-          status.textContent = 'Status: AR running — point camera at marker';
         });
 
-        // Small tweak: if user re-enters page or reloads, ensure video is paused
+        // Pause video on pagehide
         window.addEventListener('pagehide', ()=>{ if (!compVideo.paused) compVideo.pause(); });
-
-        // Expose some debug helpers in dev console
-        window.__AR_DEBUG = { setLerp: (v)=>{ window.LERP = v; console.log('setLerp',v); }, model, aVideo };
 
       })();
     </script>
