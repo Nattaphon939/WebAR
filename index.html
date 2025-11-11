@@ -151,11 +151,14 @@
       const scene = document.querySelector("#ar-scene");
       const video = document.querySelector("#video-computer");
       const blurOverlay = document.getElementById("blur-overlay");
+      let mediaStream = null;
 
       async function requestCameraAndStart() {
         try {
           // 🟢 ขออนุญาตกล้อง (ขอ rear camera ถ้ามี)
-          await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+          console.log("[start] requesting camera access...");
+          mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+          console.log("[start] camera stream obtained:", mediaStream);
 
           if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
             try {
@@ -165,12 +168,14 @@
             }
           }
 
-          // เริ่ม AR UI
+          // เริ่ม AR UI — show scan frame with blurred overlay
+          console.log("[start] camera granted; showing scan UI...");
           startScreen.style.display = "none";
           blurOverlay.classList.add("visible");
           scanFrame.style.display = "flex";
 
           // start MindAR (ensure scene + component ready)
+          console.log("[start] starting MindAR...");
           await waitForMindARAndStart();
 
           // event เมื่อ marker เจอ / หาย
@@ -178,7 +183,11 @@
           scene.addEventListener("targetLost", () => video.pause());
         } catch (err) {
           // Silent failure per user request: log to console and reset UI
-          console.error("Camera/Motion permission error:", err);
+          console.error("[start] error:", err.name, err.message);
+          if (mediaStream) {
+            mediaStream.getTracks().forEach(t => t.stop());
+            mediaStream = null;
+          }
           startScreen.style.display = "flex";
           scanFrame.style.display = "none";
           blurOverlay.classList.remove("visible");
