@@ -15,82 +15,74 @@
     <script type="module">
       import * as THREE from 'three';
       import { MindARThree } from 'mindar-image-three';
-      // *** เพิ่ม import สำหรับโหลดโมเดล GLB ***
       import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-      // 3. เริ่มต้น MindAR
-      const mindarThree = new MindARThree({
-        container: document.querySelector("#container"),
-        // *** เปลี่ยนเป็นไฟล์ .mind ของคุณ ***
-        imageTargetSrc: "AR_Marker/targets.mind" 
-      });
-      const {renderer, scene, camera} = mindarThree;
+      // *** แก้ไขที่ 1: รอให้ HTML โหลดเสร็จก่อน ***
+      window.addEventListener('DOMContentLoaded', () => {
 
-      // 4. สร้าง Anchor (ตัวยึด Marker)
-      const anchor = mindarThree.addAnchor(0); // 0 = Marker ตัวแรกในไฟล์ .mind
-
-      // 5. โหลดวิดีโอ (จาก HTML)
-      const video = document.querySelector("#networkVideo");
-      const videoTexture = new THREE.VideoTexture(video);
-      const videoGeometry = new THREE.PlaneGeometry(1, 0.56); // ขนาดแผ่นสี่เหลี่ยม
-      const videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
-      const videoMesh = new THREE.Mesh(videoGeometry, videoMaterial);
-      videoMesh.position.set(0, 0.5, 0); // ตั้งตำแหน่งวิดีโอ (เหนือโมเดลเล็กน้อย)
-      anchor.group.add(videoMesh);
-
-      // 6. โหลดโมเดล (GLB)
-      const loader = new GLTFLoader();
-      loader.load(
-        // *** เปลี่ยนเป็นไฟล์โมเดลของคุณ ***
-        "Job/Network/network-model.glb",
-        (gltf) => {
-          gltf.scene.scale.set(0.2, 0.2, 0.2); // ปรับขนาด
-          gltf.scene.position.set(0, 0, 0);   // ตั้งตำแหน่ง (ที่จุด 0,0,0 ของ Marker)
-          anchor.group.add(gltf.scene); // เพิ่มโมเดลเข้าไปใน Anchor
-        }
-      );
-
-      // 7. ปุ่มควบคุม (Start/Stop)
-      const start = async() => {
-        await mindarThree.start();
-        renderer.setAnimationLoop(() => {
-          renderer.render(scene, camera);
+        // 3. เริ่มต้น MindAR
+        const mindarThree = new MindARThree({
+          container: document.querySelector("#container"), 
+          imageTargetSrc: "AR_Marker/targets.mind",
+          
+          // *** แก้ไขที่ 2: นี่คือ "Sticky Mode" ที่ถูกต้องครับ! ***
+          buffer: true 
         });
-      }
+        const {renderer, scene, camera} = mindarThree;
 
-      const startButton = document.querySelector("#startButton");
-      const stopButton = document.querySelector("#stopButton");
+        // 4. สร้าง Anchor (ใช้ 'addAnchor' ตามปกติ)
+        // *** แก้ไขที่ 3: เปลี่ยน 'addBufferAnchor' (ที่ผิด) กลับเป็น 'addAnchor' (ที่ถูก) ***
+        const anchor = mindarThree.addAnchor(0); 
 
-      startButton.addEventListener("click", () => {
-        video.play(); // *** สั่งให้วิดีโอเริ่มเล่น ***
-        start();
-      });
-      stopButton.addEventListener("click", () => {
-        mindarThree.stop();
-        mindarThree.renderer.setAnimationLoop(null);
-      });
+        // 5. โหลดวิดีโอ (จาก HTML)
+        const video = document.querySelector("#networkVideo"); 
+        const videoTexture = new THREE.VideoTexture(video);
+        const videoGeometry = new THREE.PlaneGeometry(1, 0.56);
+        const videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture });
+        const videoMesh = new THREE.Mesh(videoGeometry, videoMaterial);
+        videoMesh.position.set(0, 0.5, 0); 
+        anchor.group.add(videoMesh);
+
+        // 6. โหลดโมเดล (GLB)
+        const loader = new GLTFLoader();
+        loader.load(
+          "Job/Network/network-model.glb",
+          (gltf) => {
+            gltf.scene.scale.set(0.2, 0.2, 0.2); 
+            gltf.scene.position.set(0, 0, 0);   
+            anchor.group.add(gltf.scene); 
+          }
+        );
+
+        // 7. ปุ่มควบคุม (Start/Stop)
+        const start = async() => {
+          await mindarThree.start();
+          renderer.setAnimationLoop(() => {
+            renderer.render(scene, camera);
+          });
+        }
+
+        const startButton = document.querySelector("#startButton"); 
+        const stopButton = document.querySelector("#stopButton");   
+
+        startButton.addEventListener("click", () => {
+          video.play(); 
+          start();
+        });
+        stopButton.addEventListener("click", () => {
+          mindarThree.stop();
+          mindarThree.renderer.setAnimationLoop(null);
+        });
+
+      // *** ปิดวงเล็บของ DOMContentLoaded ***
+      }); 
     </script>
 
     <style>
-      body {
-        margin: 0;
-      }
-      #container {
-        width: 100vw;
-        height: 100vh;
-        position: relative;
-        overflow: hidden;
-      }
-      #control {
-        position: fixed;
-        top: 0;
-        left: 0;
-        z-index: 2;
-      }
-      /* *** ซ่อนวิดีโอต้นฉบับไว้ *** */
-      #networkVideo {
-        display: none;
-      }
+      body { margin: 0; }
+      #container { width: 100vw; height: 100vh; position: relative; overflow: hidden; }
+      #control { position: fixed; top: 0; left: 0; z-index: 2; }
+      #networkVideo { display: none; }
     </style>
   </head>
   <body>
