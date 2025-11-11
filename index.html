@@ -2,478 +2,126 @@
 <html lang="th">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AR Preload → Start (ขออนุญาตเสียง+กล้อง) → Scan</title>
-
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-      "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
-    }
-  }
-  </script>
-
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simple Camera Permission Demo</title>
   <style>
-    :root{
-      --bg:#050607;
-      --accent:#10b981;
-      --muted:rgba(255,255,255,0.12);
-    }
-    html,body{height:100%; margin:0; font-family:system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:#fff}
-    /* container for AR view */
-    #container{width:100vw; height:100vh; position:relative; overflow:hidden; background:#000}
-
-    /* full-screen loader */
-    #loaderWrap{
-      position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:50;
-      background:linear-gradient(180deg, rgba(0,0,0,0.7), rgba(0,0,0,0.5));
-      transition:opacity .3s ease, visibility .3s;
-    }
-    #loader{
-      width:min(880px,94vw); max-width:96vw; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:20px; border-radius:12px;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
-    }
-    #loader h2{margin:0 0 8px 0; font-size:1.15rem}
-    #loader p{margin:0 0 18px 0; color:rgba(255,255,255,0.75); font-size:0.95rem}
-
-    .progressBar{
-      width:100%; height:14px; background:rgba(255,255,255,0.04); border-radius:10px; overflow:hidden;
-      border:1px solid var(--muted);
-    }
-    .progressFill{height:100%; width:0%; background:linear-gradient(90deg,var(--accent), #06a36b); transition:width .15s linear}
-    .progressMeta{display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-size:0.9rem}
-    .small{font-size:0.82rem; color:rgba(255,255,255,0.7)}
-
-    #startButton{
-      margin-top:14px; padding:10px 14px; border-radius:8px; border:none; background:var(--accent); color:#042016; font-weight:600; cursor:pointer;
-    }
-    #startButton[disabled]{opacity:0.45; cursor:not-allowed}
-
-    /* scan overlay (กรอบ) อยู่ด้านบนของ container */
-    .scan-overlay{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:30}
-    :root{ --frame-size: min(72vmin, 720px); }
-    .scan-frame{width:var(--frame-size); height:var(--frame-size); max-width:90%; max-height:90%; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45) inset; border-radius:12px; border:3px solid rgba(255,255,255,0.12); position:relative}
-    .scan-frame:before, .scan-frame:after{content:''; position:absolute; left:8px; right:8px; height:2px; background:linear-gradient(90deg, rgba(255,255,255,0.0), rgba(255,255,255,0.55), rgba(255,255,255,0.0)); animation:scanline 2.2s linear infinite}
-    .scan-frame:before{top:6%}
-    .scan-frame:after{bottom:6%; animation-delay:1.1s}
-    .corner{position:absolute; width:28px; height:28px; border:4px solid #34d399; border-radius:6px; box-sizing:border-box}
-    .corner.tl{left:-12px; top:-12px; border-right:none; border-bottom:none}
-    .corner.tr{right:-12px; top:-12px; border-left:none; border-bottom:none}
-    .corner.bl{left:-12px; bottom:-12px; border-right:none; border-top:none}
-    .corner.br{right:-12px; bottom:-12px; border-left:none; border-top:none}
-    @keyframes scanline{0%{transform:translateY(-6%)}50%{transform:translateY(106%)}100%{transform:translateY(-6%)}}
-
-    /* control top-left (for testing stop) */
-    #ctrl{position:fixed; top:10px; left:10px; z-index:40}
-    #ctrl button{padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.4); color:#fff; margin-right:8px; cursor:pointer}
-
-    @media (max-width:520px){ :root{ --frame-size:76vmin } }
+    :root{--bg:#0b0b0b;--card:#0f1720;--accent:#10b981}
+    body{margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); color:#fff; font-family:system-ui,Segoe UI,Roboto,Arial}
+    .card{width:min(820px,94vw); background:var(--card); padding:18px; border-radius:12px; box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+    h1{margin:0 0 8px 0; font-size:1.05rem}
+    p{margin:0 0 14px 0; color:rgba(255,255,255,0.8)}
+    .controls{display:flex; gap:8px; align-items:center}
+    button{padding:10px 14px; border-radius:8px; border:none; cursor:pointer; font-weight:600}
+    button.primary{background:var(--accent); color:#042016}
+    button.ghost{background:transparent; color:#fff; border:1px solid rgba(255,255,255,0.06)}
+    #status{margin-top:10px; color:rgba(255,255,255,0.85)}
+    .videoWrap{margin-top:12px; background:#000; border-radius:10px; overflow:hidden; width:100%; aspect-ratio:16/9; display:flex; align-items:center; justify-content:center}
+    video{width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1)} /* mirror for selfie feel - remove transform if not wanted */
+    .note{margin-top:10px; font-size:0.9rem; color:rgba(255,255,255,0.6)}
   </style>
 </head>
 <body>
-  <!-- control buttons -->
-  <div id="ctrl">
-    <button id="stopButton" style="display:none">Stop AR</button>
-  </div>
+  <div class="card">
+    <h1>ทดลองเปิดกล้อง (Simple)</h1>
+    <p>กดปุ่มด้านล่างเพื่อขออนุญาตกล้องและแสดงภาพกล้องบนหน้าเว็บ — ต้องรันบน HTTPS หรือ localhost</p>
 
-  <!-- AR container -->
-  <div id="container"></div>
-
-  <!-- scan overlay (hidden until AR started) -->
-  <div class="scan-overlay" id="scanOverlay" style="display:none" aria-hidden="true">
-    <div class="scan-frame" role="presentation" id="scanFrame">
-      <div class="corner tl"></div>
-      <div class="corner tr"></div>
-      <div class="corner bl"></div>
-      <div class="corner br"></div>
+    <div class="controls">
+      <button id="startBtn" class="primary">Start Camera</button>
+      <button id="stopBtn" class="ghost" disabled>Stop Camera</button>
+      <div id="status" aria-live="polite">สถานะ: ยังไม่เริ่ม</div>
     </div>
-  </div>
 
-  <!-- full-screen loader (initial) -->
-  <div id="loaderWrap" aria-live="polite">
-    <div id="loader" role="dialog" aria-modal="true" aria-label="Loading AR content">
-      <h2>กำลังเตรียมเนื้อหา AR…</h2>
-      <p>ระบบจะโหลดไฟล์ AR (targets), โมเดล 3D และวิดีโอล่วงหน้า เพื่อให้เมื่อกด Start แล้วสามารถขอสิทธิ์และสแกนได้ทันที</p>
-
-      <div class="progressBar" aria-hidden="false">
-        <div class="progressFill" id="progressFill"></div>
-      </div>
-      <div class="progressMeta">
-        <div class="small" id="progressLabel">กำลังโหลด: 0%</div>
-        <div class="small" id="progressStage">Waiting…</div>
-      </div>
-
-      <div style="display:flex; gap:8px; align-items:center;">
-        <button id="startButton" disabled title="รอโหลดไฟล์จนเสร็จ">Start AR (ขออนุญาตตอนกด)</button>
-        <div class="small" id="hint">หมายเหตุ: ต้องรันบน <strong>HTTPS</strong> หรือ <strong>localhost</strong></div>
-      </div>
+    <div class="videoWrap" id="videoWrap" style="margin-top:14px;">
+      <!-- video element จะถูกเชื่อม stream เมื่ออนุญาต -->
+      <video id="cameraVideo" playsinline autoplay muted></video>
     </div>
+
+    <div class="note">หมายเหตุ: ถ้ารันบนไฟล์ (`file://`) หรือ HTTP ที่ไม่ปลอดภัย กล้องจะไม่ทำงาน</div>
   </div>
 
-  <script type="module">
-    import * as THREE from 'three';
-    import { MindARThree } from 'mindar-image-three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusEl = document.getElementById('status');
+    const videoEl = document.getElementById('cameraVideo');
 
-    // ====== CONFIG - เปลี่ยนพาธตามโปรเจคของคุณ ======
-    const IMAGE_TARGET_SRC = 'AR_Marker/targets.mind'; // <-- ไฟล์ target ที่ต้องโหลด
-    const MODEL_URL = 'Job/Network/network-model.glb'; // <-- โมเดล GLB (preload) - ปรับเป็นพาธจริง
-    const VIDEO_URL = 'Job/Network/video-network.mp4'; // <-- วิดีโอ (preload) - ปรับเป็นพาธจริง
-    // ==================================================
+    let currentStream = null;
 
-    // Weights for combined progress (ปรับตามขนาด/ความสำคัญ)
-    const WEIGHT = { targets: 0.2, model: 0.5, video: 0.3 };
-
-    // UI refs
-    const loaderWrap = document.getElementById('loaderWrap');
-    const progressFill = document.getElementById('progressFill');
-    const progressLabel = document.getElementById('progressLabel');
-    const progressStage = document.getElementById('progressStage');
-    const startButton = document.getElementById('startButton');
-    const stopButton = document.getElementById('stopButton');
-    const scanOverlay = document.getElementById('scanOverlay');
-    const container = document.getElementById('container');
-
-    // state holders (preloaded content)
-    let preloaded = {
-      targetsLoaded: false,
-      targetsProgress: 0,
-      modelLoaded: false,
-      modelProgress: 0,
-      videoLoaded: false,
-      videoProgress: 0,
-      gltfScene: null,
-      videoEl: null,
-      videoTexture: null
-    };
-
-    // helper to update UI combined progress
-    function updateCombinedProgress(){
-      const t = preloaded.targetsProgress || 0;
-      const m = preloaded.modelProgress || 0;
-      const v = preloaded.videoProgress || 0;
-      const combined = Math.min(100, Math.round((t*WEIGHT.targets + m*WEIGHT.model + v*WEIGHT.video)));
-      progressFill.style.width = combined + '%';
-      progressLabel.textContent = `กำลังโหลด: ${combined}%`;
-      // stage indicator
-      if(!preloaded.targetsLoaded) progressStage.textContent = 'โหลด targets.mind';
-      else if(!preloaded.modelLoaded) progressStage.textContent = 'โหลดโมเดล 3D';
-      else if(!preloaded.videoLoaded) progressStage.textContent = 'โหลดวิดีโอ';
-      else progressStage.textContent = 'พร้อมแล้ว';
-      // enable start when fully loaded
-      if(preloaded.targetsLoaded && preloaded.modelLoaded && preloaded.videoLoaded){
-        startButton.disabled = false;
-        startButton.focus();
-      }
+    function setStatus(msg){
+      statusEl.textContent = 'สถานะ: ' + msg;
     }
 
-    // ========== preload targets.mind with byte stream progress ==========
-    async function preloadTargets(url){
-      preloaded.targetsProgress = 0; updateCombinedProgress();
+    async function startCamera(){
+      setStatus('ขออนุญาตกล้อง...');
+      startBtn.disabled = true;
+
+      // พยายามใช้กล้องหลังเป็นค่าเริ่มต้น (สำหรับมือถือ)
+      const constraintsExact = { video: { facingMode: { exact: 'environment' } }, audio: false };
+      const constraintsFallback = { video: { facingMode: 'environment' }, audio: false };
+
+      // ปิด stream เก่าถ้ามี
+      stopCamera();
+
       try{
-        const resp = await fetch(url, {method:'GET', cache:'no-store'});
-        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        // try stream reading to get progress
-        const contentLength = resp.headers.get('content-length');
-        if(!resp.body || !contentLength){
-          // fallback: if no stream, just await arrayBuffer
-          await resp.arrayBuffer();
-          preloaded.targetsProgress = 100;
-          preloaded.targetsLoaded = true;
-          updateCombinedProgress();
-          return;
-        }
-        const total = parseInt(contentLength, 10);
-        const reader = resp.body.getReader();
-        let loaded = 0;
-        while(true){
-          const {done, value} = await reader.read();
-          if(done) break;
-          loaded += (value ? value.length : 0);
-          preloaded.targetsProgress = Math.round(loaded / total * 100);
-          updateCombinedProgress();
-        }
-        preloaded.targetsProgress = 100;
-        preloaded.targetsLoaded = true;
-        updateCombinedProgress();
-      }catch(err){
-        console.error('preloadTargets error', err);
-        alert('ไม่สามารถโหลด targets.mind: ' + (err.message || err));
-        // still mark as failed — keep UI but disable start
-        preloaded.targetsProgress = 0;
-        preloaded.targetsLoaded = false;
-        updateCombinedProgress();
-        throw err;
-      }
-    }
-
-    // ========== preload GLB with loader progress ==========
-    function preloadModel(url){
-      return new Promise((resolve, reject) => {
-        preloaded.modelProgress = 0; updateCombinedProgress();
-        const loader = new GLTFLoader();
-        loader.load(url,
-          // onLoad
-          (gltf) => {
-            preloaded.gltfScene = gltf.scene;
-            preloaded.modelProgress = 100;
-            preloaded.modelLoaded = true;
-            updateCombinedProgress();
-            resolve(gltf.scene);
-          },
-          // onProgress
-          (xhr) => {
-            // xhr.loaded / xhr.total may be undefined in some servers — guard it
-            if(xhr && xhr.total) {
-              preloaded.modelProgress = Math.round(xhr.loaded / xhr.total * 100);
-            } else {
-              // fallback: gently animate progress if unknown
-              preloaded.modelProgress = Math.min(95, preloaded.modelProgress + 6);
-            }
-            updateCombinedProgress();
-          },
-          // onError
-          (err) => {
-            console.error('preloadModel error', err);
-            reject(err);
-          }
-        );
-      });
-    }
-
-    // ========== preload video (wait for canplaythrough) ==========
-    function preloadVideo(url){
-      return new Promise((resolve, reject) => {
-        preloaded.videoProgress = 0; updateCombinedProgress();
-        const v = document.createElement('video');
-        v.src = url;
-        v.preload = 'auto';
-        v.crossOrigin = 'anonymous';
-        v.playsInline = true;
-        v.muted = true; // muted for preload to avoid autoplay block; we'll unmute after permission
-        v.loop = true;
-        v.style.display = 'none';
-        document.body.appendChild(v);
-        // progress simulation via buffered (best-effort)
-        const onLoaded = () => {
-          preloaded.videoProgress = 100;
-          preloaded.videoLoaded = true;
-          preloaded.videoEl = v;
-          updateCombinedProgress();
-          // create texture later after THREE exists
-          resolve(v);
-        };
-        const onProgress = () => {
-          try{
-            if(v.buffered && v.buffered.length){
-              const bufferedEnd = v.buffered.end(v.buffered.length - 1);
-              const duration = v.duration || 1;
-              preloaded.videoProgress = Math.min(99, Math.round(bufferedEnd / duration * 100));
-              updateCombinedProgress();
-            } else {
-              // bump progress slowly
-              preloaded.videoProgress = Math.min(90, preloaded.videoProgress + 4);
-              updateCombinedProgress();
-            }
-          }catch(e){}
-        };
-        const onError = (e) => {
-          console.error('preloadVideo error', e);
-          reject(e);
-        };
-        v.addEventListener('canplaythrough', onLoaded, {once:true});
-        v.addEventListener('progress', onProgress);
-        v.addEventListener('error', onError, {once:true});
-        // try to start loading
-        v.load();
-        // safety timeout: if nothing happens, resolve after 20s (best-effort)
-        setTimeout(() => {
-          if(!preloaded.videoLoaded){
-            console.warn('video preload timeout — marking loaded (best-effort)');
-            preloaded.videoProgress = 100;
-            preloaded.videoLoaded = true;
-            preloaded.videoEl = v;
-            updateCombinedProgress();
-            resolve(v);
-          }
-        }, 20000);
-      });
-    }
-
-    // ======= Perform preloads in parallel, update progress =======
-    async function doPreloads(){
-      try{
-        // start all three but await each; keep independent so we can show stage
-        const tasks = [
-          preloadTargets(IMAGE_TARGET_SRC).catch(e => { throw e; }),
-          preloadModel(MODEL_URL).catch(e => { throw e; }),
-          preloadVideo(VIDEO_URL).catch(e => { throw e; }),
-        ];
-        // Wait for all
-        await Promise.all(tasks);
-        // final update
-        preloaded.targetsProgress = preloaded.modelProgress = preloaded.videoProgress = 100;
-        preloaded.targetsLoaded = preloaded.modelLoaded = preloaded.videoLoaded = true;
-        updateCombinedProgress();
-      }catch(err){
-        console.error('doPreloads failed', err);
-        // keep loader visible and disable start
-        startButton.disabled = true;
-      }
-    }
-
-    // Start preloading immediately
-    doPreloads();
-
-    // ========== AR startup flow (on Start button clicked) ==========
-    let mindarThree = null;
-    let renderer = null;
-    let scene = null;
-    let camera = null;
-    let anchor = null;
-    let videoMesh = null;
-    let videoTexture = null;
-
-    async function startARFlow(){
-      startButton.disabled = true;
-      progressStage.textContent = 'ขอสิทธิ์ใช้งานเสียงและกล้อง...';
-      try{
-        // 1) ขอสิทธิ์เสียง (audio) — เรียกเฉพาะ audio เพื่อไม่ชนกับ MindAR's internal camera permission
+        // บางเบราว์เซอร์/อุปกรณ์ไม่รองรับ exact — ใช้ fallback
         try{
-          await navigator.mediaDevices.getUserMedia({ audio: true });
-          console.log('audio permission granted');
-        }catch(audioErr){
-          console.warn('audio permission denied or error', audioErr);
-          // ถ้าผู้ใช้ปฏิเสธ เสนอให้ดำเนินการต่อโดยไม่มีเสียง
+          currentStream = await navigator.mediaDevices.getUserMedia(constraintsExact);
+        }catch(e){
+          currentStream = await navigator.mediaDevices.getUserMedia(constraintsFallback);
         }
 
-        // 2) สร้าง MindAR instance และ start (mindarThree.start() จะขอ permission กล้อง)
-        progressStage.textContent = 'เริ่มระบบ AR (ขออนุญาตกล้อง)...';
-        mindarThree = new MindARThree({
-          container: container,
-          imageTargetSrc: IMAGE_TARGET_SRC
-        });
-        renderer = mindarThree.renderer;
-        scene = mindarThree.scene;
-        camera = mindarThree.camera;
+        // ผูก stream กับ video element
+        videoEl.srcObject = currentStream;
+        // บางเบราว์เซอร์ต้อง set muted = true เพื่อให้ autoplay ทำงาน (เราตั้ง muted โดย default)
+        videoEl.muted = true;
+        await videoEl.play().catch(()=>{/* ignore */});
 
-        // create anchor AFTER mindarThree created
-        anchor = mindarThree.addAnchor(0);
-
-        // attach preloaded GLTF and video (but keep them hidden until found)
-        if(preloaded.gltfScene){
-          preloaded.gltfScene.visible = false;
-          // tweak scale/pos if needed
-          preloaded.gltfScene.scale.set(0.06,0.06,0.06);
-          anchor.group.add(preloaded.gltfScene);
-        }
-
-        // video: create texture from preloaded video element
-        if(preloaded.videoEl){
-          // unmute video if user gave audio permission earlier
-          try{
-            // attempt to unmute — if user didn't allow audio, play may still be allowed muted
-            preloaded.videoEl.muted = false;
-          }catch(e){}
-          videoTexture = new THREE.VideoTexture(preloaded.videoEl);
-          videoTexture.encoding = THREE.sRGBEncoding;
-          const aspect = (preloaded.videoEl.videoWidth && preloaded.videoEl.videoHeight) ? (preloaded.videoEl.videoWidth / preloaded.videoEl.videoHeight) : (16/9);
-          const planeWidth = 1.0;
-          const planeHeight = planeWidth / aspect;
-          const geo = new THREE.PlaneGeometry(planeWidth, planeHeight);
-          const mat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
-          videoMesh = new THREE.Mesh(geo, mat);
-          videoMesh.visible = false;
-          videoMesh.position.set(0, 0.25, 0);
-          anchor.group.add(videoMesh);
-        }
-
-        // Start MindAR -> this will ask camera permission now (user gesture happened)
-        await mindarThree.start();
-        console.log('mindar started');
-        // show scan overlay
-        scanOverlay.style.display = 'flex';
-        // show stop control
-        stopButton.style.display = 'inline-block';
-        // remove loader UI (fade out)
-        loaderWrap.style.opacity = '0';
-        setTimeout(()=> loaderWrap.style.visibility = 'hidden', 350);
-
-        // render loop
-        renderer.setAnimationLoop(() => {
-          renderer.render(scene, camera);
-        });
-
-        // anchor events: show/hide model + play/pause video
-        anchor.onTargetFound = () => {
-          console.log('target found');
-          scanOverlay.style.display = 'none';
-          if(preloaded.gltfScene) preloaded.gltfScene.visible = true;
-          if(videoMesh && preloaded.videoEl){
-            videoMesh.visible = true;
-            // try play video (should be allowed because user gesture + audio permission)
-            const playP = preloaded.videoEl.play();
-            if(playP && playP.catch){
-              playP.catch(err => {
-                console.warn('video play rejected after start:', err);
-                // fallback: mute and play
-                preloaded.videoEl.muted = true;
-                preloaded.videoEl.play().catch(()=>{});
-              });
-            }
-          }
-        };
-        anchor.onTargetLost = () => {
-          console.log('target lost');
-          scanOverlay.style.display = 'flex';
-          if(preloaded.gltfScene) preloaded.gltfScene.visible = false;
-          if(videoMesh && preloaded.videoEl){
-            videoMesh.visible = false;
-            try{ preloaded.videoEl.pause(); }catch(e){}
-          }
-        };
-
+        setStatus('กล้องเปิดแล้ว');
+        stopBtn.disabled = false;
       }catch(err){
-        console.error('startARFlow error', err);
-        alert('ไม่สามารถเริ่ม AR ได้: ' + (err.message || err));
-        startButton.disabled = false;
-      }
-    }
-
-    // bind start button
-    startButton.addEventListener('click', () => {
-      startARFlow();
-    });
-
-    // stop button handler
-    stopButton.addEventListener('click', async () => {
-      try{
-        if(mindarThree){
-          await mindarThree.stop();
-          mindarThree = null;
-          // stop video
-          if(preloaded.videoEl) try{ preloaded.videoEl.pause(); }catch(e){}
-          // stop render
-          if(renderer) renderer.setAnimationLoop(null);
-          // show loader again so user can restart (optional)
-          loaderWrap.style.visibility = 'visible';
-          loaderWrap.style.opacity = '1';
-          scanOverlay.style.display = 'none';
-          stopButton.style.display = 'none';
-          startButton.disabled = false;
+        console.error('getUserMedia error:', err);
+        if(err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')){
+          setStatus('ผู้ใช้ปฏิเสธอนุญาตกล้อง');
+          alert('โปรดอนุญาตการเข้าถึงกล้องใน prompt ของเบราว์เซอร์');
+        }else{
+          setStatus('ไม่สามารถเปิดกล้อง: ' + (err.message || err.name));
+          alert('ไม่สามารถเปิดกล้อง: ' + (err.message || err.name));
         }
-      }catch(e){
-        console.warn('stop error', e);
+        startBtn.disabled = false;
       }
+    }
+
+    function stopCamera(){
+      if(currentStream){
+        currentStream.getTracks().forEach(t => t.stop());
+        currentStream = null;
+      }
+      try{ videoEl.pause(); }catch(e){}
+      videoEl.srcObject = null;
+      stopBtn.disabled = true;
+      setStatus('หยุดกล้อง');
+      startBtn.disabled = false;
+    }
+
+    startBtn.addEventListener('click', async () => {
+      // เรียกจาก user gesture -> browser จะอนุญาต prompt
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        alert('เบราว์เซอร์นี้ไม่รองรับกล้อง (getUserMedia) — ใช้ Chrome/Edge/Firefox รุ่นล่าสุด บน HTTPS หรือ localhost');
+        return;
+      }
+      await startCamera();
     });
 
-    // Compatibility check
-    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-      alert('เบราว์เซอร์นี้ไม่รองรับ getUserMedia — โปรดใช้ Chrome/Edge/Firefox บน HTTPS หรือ localhost');
-      startButton.disabled = true;
-    }
+    stopBtn.addEventListener('click', () => {
+      stopCamera();
+    });
+
+    // ป้องกันกรณีผู้ใช้เปลี่ยน permission ภายนอก: ถ้าไม่มี permission ให้ปุ่ม Start ทำงานต่อได้
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible' && !currentStream){
+        setStatus('พร้อม (กด Start เพื่อขออนุญาตกล้อง)');
+      }
+    });
   </script>
 </body>
 </html>
