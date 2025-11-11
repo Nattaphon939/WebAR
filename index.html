@@ -1,67 +1,243 @@
-<html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script type="importmap">
-    {
-      "imports": {
-	"three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-	"three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-	"mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MindAR + Scan Frame + GLB & Video on Found</title>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    }
+  }
+  </script>
+
+  <style>
+    html,body{height:100%; margin:0}
+    #container{width:100vw; height:100vh; position:relative; overflow:hidden; background:#000}
+    #control{position:fixed; top:10px; left:10px; z-index:30}
+    #control button{margin-right:6px; padding:8px 10px; border-radius:6px; background:#111; color:#fff; border:1px solid rgba(255,255,255,0.08); cursor:pointer}
+
+    /* Scan overlay (กรอบสแกน) */
+    :root{ --frame-size: min(72vmin, 720px); }
+    .scan-overlay{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; z-index:20}
+    .scan-frame{width:var(--frame-size); height:var(--frame-size); max-width:90%; max-height:90%; box-shadow: 0 0 0 9999px rgba(0,0,0,0.45) inset; border-radius:12px; border:3px solid rgba(255,255,255,0.12); position:relative}
+    .scan-frame:before, .scan-frame:after{content:''; position:absolute; left:8px; right:8px; height:2px; background:linear-gradient(90deg, rgba(255,255,255,0.0), rgba(255,255,255,0.55), rgba(255,255,255,0.0)); animation:scanline 2.2s linear infinite}
+    .scan-frame:before{top:6%}
+    .scan-frame:after{bottom:6%; animation-delay:1.1s}
+    .corner{position:absolute; width:28px; height:28px; border:4px solid #34d399; border-radius:6px; box-sizing:border-box}
+    .corner.tl{left:-12px; top:-12px; border-right:none; border-bottom:none}
+    .corner.tr{right:-12px; top:-12px; border-left:none; border-bottom:none}
+    .corner.bl{left:-12px; bottom:-12px; border-right:none; border-top:none}
+    .corner.br{right:-12px; bottom:-12px; border-left:none; border-top:none}
+    @keyframes scanline{0%{transform:translateY(-6%)}50%{transform:translateY(106%)}100%{transform:translateY(-6%)}}
+
+    /* small screen */
+    @media (max-width:520px){ :root{ --frame-size:76vmin } }
+  </style>
+</head>
+<body>
+  <div id="control">
+    <button id="startButton">Start AR (ขออนุญาตกล้อง)</button>
+    <button id="stopButton">Stop AR</button>
+  </div>
+
+  <div id="container"></div>
+
+  <!-- overlay scan frame -->
+  <div class="scan-overlay" id="scanOverlay" aria-hidden="true">
+    <div class="scan-frame" role="presentation" id="scanFrame">
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { MindARThree } from 'mindar-image-three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // ====== CONFIG ======
+    // เปลี่ยนสองพาธนี้ให้เป็นของโปรเจคจริงของคุณ
+    const IMAGE_TARGET_SRC = 'AR_Marker/targets.mind'; // <-- ตามที่คุณบอก
+    const MODEL_URL = 'jobs/new/new-model.glb';       // <-- เปลี่ยนเป็นพาธโมเดลของคุณ
+    const VIDEO_URL = 'jobs/new/video-new.mp4';      // <-- เปลี่ยนเป็นพาธวิดีโอของคุณ
+    // ====================
+
+    const container = document.querySelector('#container');
+    const scanOverlay = document.querySelector('#scanOverlay');
+    const startButton = document.querySelector('#startButton');
+    const stopButton = document.querySelector('#stopButton');
+
+    // สร้าง instance MindAR
+    const mindarThree = new MindARThree({
+      container: container,
+      imageTargetSrc: IMAGE_TARGET_SRC,
+      // ถ้าต้องการปรับ resolution/cameraPreference ให้ใส่ที่นี่
+      // uiElement: null // ถ้าต้องการปิด UI ของ mindar
+    });
+    const { renderer, scene, camera } = mindarThree;
+
+    // anchor สำหรับ target index 0 (สมมติว่าใน targets.mind มี target แรกคือที่ต้องการ)
+    const anchor = mindarThree.addAnchor(0);
+
+    // loader สำหรับ GLB
+    const gltfLoader = new GLTFLoader();
+
+    // ตัวเก็บโมเดลและ plane วิดีโอ
+    let modelRoot = null;
+    let videoMesh = null;
+    let videoEl = null;
+
+    // สร้าง video element (DOM) สำหรับใช้เป็น texture
+    function createVideoElement(url){
+      const v = document.createElement('video');
+      v.src = url;
+      v.crossOrigin = 'anonymous';
+      v.loop = true;
+      v.muted = false; // ตั้งเป็น true ถ้าต้องการให้เงียบเริ่มต้น
+      v.playsInline = true;
+      v.preload = 'auto';
+      v.style.display = 'none';
+      // อย่า append ถ้าไม่ต้องการ แต่เพื่อให้บางบราว์เซอร์เล่นได้ต้องอยู่บน DOM บางตัว
+      document.body.appendChild(v);
+      return v;
+    }
+
+    // ฟังก์ชันช่วยโหลดโมเดลและสร้าง mesh วิดีโอ แล้วเพิ่มลง anchor.group แต่ซ่อนก่อน
+    async function prepareContent(){
+      // โหลดโมเดล GLB
+      try{
+        const gltf = await gltfLoader.loadAsync(MODEL_URL);
+        modelRoot = gltf.scene;
+        // ปรับ scale/rotation/position ตามที่ต้องการ (แก้ให้พอดีขนาด marker)
+        // ตัวอย่าง:
+        modelRoot.scale.set(0.06,0.06,0.06); // ปรับขนาดให้เหมาะสม
+        modelRoot.position.set(0, 0, 0);
+        modelRoot.visible = false; // ซ่อนก่อนจนกว่าจะเจอ target
+        anchor.group.add(modelRoot);
+      }catch(err){
+        console.warn('โหลดโมเดลล้มเหลว:', err);
+      }
+
+      // สร้าง plane สำหรับเล่นวิดีโอ
+      try{
+        videoEl = createVideoElement(VIDEO_URL);
+        // ไม่ play ทันที เราจะ play เมื่อ target ถูกพบ
+        // สร้าง texture จาก video
+        const videoTexture = new THREE.VideoTexture(videoEl);
+        videoTexture.encoding = THREE.sRGBEncoding;
+        const aspect = 16/9;
+        const planeWidth = 1.0; // จะปรับตามขนาดที่ต้องการให้พอดีกับโมเดล/marker
+        const planeHeight = planeWidth / aspect;
+        const geo = new THREE.PlaneGeometry(planeWidth, planeHeight);
+        const mat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide, toneMapped: false });
+        videoMesh = new THREE.Mesh(geo, mat);
+        // ปรับตำแหน่ง plane ให้ไม่ชนโมเดล (แก้ตามความต้องการ)
+        videoMesh.position.set(0, 0.25, 0); // ยกขึ้นเล็กน้อย
+        videoMesh.rotation.x = -Math.PI/2 * 0.05; // ปรับมุมเล็กน้อยถ้าต้องการ
+        videoMesh.visible = false; // ซ่อนก่อน
+        anchor.group.add(videoMesh);
+      }catch(err){
+        console.warn('สร้างวิดีโอ mesh ผิดพลาด:', err);
       }
     }
-    </script>
-    <script type="module">
-      import * as THREE from 'three';
-      import { MindARThree } from 'mindar-image-three';
-      const mindarThree = new MindARThree({
-	container: document.querySelector("#container"),
-	imageTargetSrc: "https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/image-tracking/assets/card-example/card.mind"
-      });
-      const {renderer, scene, camera} = mindarThree;
-      const anchor = mindarThree.addAnchor(0);
-      const geometry = new THREE.PlaneGeometry(1, 0.55);
-      const material = new THREE.MeshBasicMaterial( {color: 0x00ffff, transparent: true, opacity: 0.5} );
-      const plane = new THREE.Mesh( geometry, material );
-      anchor.group.add(plane);
-      const start = async() => {
-	await mindarThree.start();
-	renderer.setAnimationLoop(() => {
-	  renderer.render(scene, camera);
-	});
+
+    // เรียก preparecontent แต่ไม่ต้อง await ที่ปุ่ม start — เพื่อ preload ก่อน
+    prepareContent();
+
+    // แสดง/ซ่อน overlay (scan frame)
+    function showScanOverlay(){ scanOverlay.style.display = 'flex' }
+    function hideScanOverlay(){ scanOverlay.style.display = 'none' }
+
+    // เมื่อพบ target (trigger จาก mindar anchor)
+    anchor.onTargetFound = () => {
+      console.log('target found');
+      hideScanOverlay();
+
+      // แสดงโมเดล/วิดีโอ
+      if(modelRoot) modelRoot.visible = true;
+      if(videoMesh) {
+        videoMesh.visible = true;
+        // บางเบราว์เซอร์ต้องการ gesture จากผู้ใช้ก่อน play เสียง — ถ้าเสียงสำคัญ ให้ตั้ง muted=false และเรียก play หลัง gesture
+        // เราจะพยายาม play (นำไปใช้กับ videoEl)
+        const p = videoEl.play();
+        if(p && p.catch){
+          p.catch(err => {
+            console.warn('video play rejected:', err);
+            // ถ้าถูกบล็อกเพราะไม่มี gesture ให้ mute แล้วลอง play อีกครั้ง
+            videoEl.muted = true;
+            videoEl.play().catch(()=>{/* ignore */});
+          });
+        }
       }
-      const startButton = document.querySelector("#startButton");
-      startButton.addEventListener("click", () => {
-	start();
-      });
-      stopButton.addEventListener("click", () => {
-	mindarThree.stop();
-	mindarThree.renderer.setAnimationLoop(null);
-      });
-    </script>
-    <style>
-      body {
-	margin: 0;
+    };
+
+    anchor.onTargetLost = () => {
+      console.log('target lost');
+      // แสดง overlay สแกนอีกครั้ง
+      showScanOverlay();
+
+      // ซ่อนและหยุดวิดีโอ (หรือ pause)
+      if(modelRoot) modelRoot.visible = false;
+      if(videoMesh) {
+        videoMesh.visible = false;
+        try{ videoEl.pause(); }catch(e){}
+        // ถ้าต้องการ reset เวลา: videoEl.currentTime = 0;
       }
-      #container {
-	width: 100vw;
-	height: 100vh;
-	position: relative;
-	overflow: hidden;
+    };
+
+    // render loop (mindarThree.start จะเรียก renderer loop แทน)
+    function startAR(){
+      showScanOverlay();
+      mindarThree.start()
+        .then(()=> {
+          console.log('mindar started');
+          renderer.setAnimationLoop(() => {
+            renderer.render(scene, camera);
+          });
+        })
+        .catch(err => {
+          console.error('mindar start failed:', err);
+          alert('ไม่สามารถเริ่ม AR: ' + (err.message || err.name));
+        });
+    }
+
+    async function stopAR(){
+      try{
+        await mindarThree.stop();
+        renderer.setAnimationLoop(null);
+        // pause video หากกำลังเล่น
+        if(videoEl) try{ videoEl.pause(); }catch(e){}
+        // show overlay เมื่อหยุด
+        showScanOverlay();
+      }catch(e){
+        console.warn('stopAR failed', e);
       }
-      #control {
-	position: fixed;
-	top: 0;
-	left: 0;
-	z-index: 2;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="control">
-      <button id="startButton">Start</button>
-      <button id="stopButton">Stop</button>
-    </div>
-    <div id="container">
-    </div>
-  </body>
+    }
+
+    // bind ปุ่ม
+    startButton.addEventListener('click', () => {
+      // เรียก start — MindAR จะขออนุญาตกล้อง ถ้ายังไม่ให้
+      startAR();
+    });
+    stopButton.addEventListener('click', () => {
+      stopAR();
+    });
+
+    // ถ้าต้องการ preload content ก่อน ให้เรียก prepareContent() ที่โหลดโมเดล/วิดีโอไว้แล้ว
+    // เราเรียก prepareContent() ตอนเริ่มหน้าเพจแล้ว
+
+    // ปิด overlay ถ้าเบราว์เซอร์ไม่รองรับหรือเกิดปัญหา
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      alert('เบราว์เซอร์นี้ไม่รองรับกล้อง (getUserMedia) — ใช้ Chrome/Edge/Firefox รุ่นล่าสุดบนมือถือหรือเดสก์ท็อป');
+      showScanOverlay();
+    }
+  </script>
+</body>
 </html>
