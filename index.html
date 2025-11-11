@@ -1,1 +1,217 @@
-<!DOCTYPE html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>WebAR — Computer Demo (MindAR + Sticky + Smoothing)</title>
+
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  <!-- MindAR (image tracking for A-Frame) -->
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.4/dist/mindar-image-aframe.prod.js"></script>
+
+  <style>
+    html,body{ height:100%; margin:0; }
+    #app{ width:100%; height:100%; position:relative; overflow:hidden; background:#000; }
+
+    /* Simple overlay UI */
+    .overlay {
+      position:absolute; left:0; right:0; top:0; bottom:0; display:flex; align-items:center; justify-content:center; z-index:9;
+    }
+    #startBtn{
+      background:linear-gradient(90deg,#2b7cff,#0ea5ff); color:#fff; border:none; padding:14px 22px; font-size:18px; border-radius:10px; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,0.3);
+    }
+    #hint{ position:absolute; bottom:18px; left:12px; right:12px; text-align:center; color:#fff; font-size:14px; opacity:0.9 }
+
+    /* small status area */
+    #status{ position:absolute; top:12px; left:12px; color:#fff; backdrop-filter: blur(6px); padding:8px 10px; border-radius:8px; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+
+    <!-- Hidden video element used as texture for <a-video> -->
+    <video id="compVideo" playsinline controls="false" crossorigin="anonymous" webkit-playsinline="true" style="display:none">
+      <source src="Computer/Computer.mp4" type="video/mp4">
+    </video>
+
+    <!-- Overlay UI to get user gesture (required on mobile to unlock camera + video) -->
+    <div class="overlay" id="overlay">
+      <div style="text-align:center">
+        <h2 style="color:#fff; margin:0 0 8px 0">AR Computer Demo</h2>
+        <button id="startBtn">Start AR</button>
+        <div id="hint">Allow camera when prompted, then point your camera at the marker (AR_Marker/targets.mind)</div>
+      </div>
+    </div>
+
+    <div id="status">Status: waiting</div>
+
+    <!-- A-Frame + MindAR scene
+         - filterMinCF & filterBeta: MindAR built-in smoothing
+         - embedded: run in page
+         - device-orientation-permission-ui: disabled because we use custom start button
+    -->
+    <a-scene vr-mode-ui="enabled: false"
+             embedded
+             mindar-image="imageTargetSrc: ./AR_Marker/targets.mind; filterMinCF: 0.001; filterBeta: 0.02; autoStart: false;">
+
+      <!-- mindar target entity (index 0) -->
+      <a-entity id="target" mindar-image-target="targetIndex: 0">
+        <!-- anchor proxy: an empty entity we use to sample marker pose -->
+        <a-entity id="anchorProxy" position="0 0 0"></a-entity>
+
+        <!-- Computer model: initially invisible, will be made visible after stability check -->
+        <a-entity id="computerModel"
+                  gltf-model="url(Computer/Computer-Model.glb)"
+                  scale="0.6 0.6 0.6"
+                  rotation="0 0 0"
+                  visible="false">
+        </a-entity>
+
+        <!-- Video as an A-Frame video entity (texture from hidden <video>) -->
+        <a-video id="computerVideo"
+                 src="#compVideo"
+                 width="1.4"
+                 height="0.78"
+                 position="0 0.12 0.8"
+                 rotation="0 180 0"
+                 visible="false"
+                 playsinline>
+        </a-video>
+
+      </a-entity>
+
+      <!-- camera -->
+      <a-entity camera></a-entity>
+    </a-scene>
+
+    <script>
+      (function(){
+        const startBtn = document.getElementById('startBtn');
+        const overlay = document.getElementById('overlay');
+        const status = document.getElementById('status');
+
+        const compVideo = document.getElementById('compVideo');
+        const scene = document.querySelector('a-scene');
+        const target = document.getElementById('target');
+        const anchorProxy = document.getElementById('anchorProxy');
+        const model = document.getElementById('computerModel');
+        const aVideo = document.getElementById('computerVideo');
+
+        // Configs you can tweak
+        const STABILITY_MS = 700;      // time marker must be stable before showing
+        const LERP_FACTOR = 0.15;      // smoothing lerp (0.05..0.25)
+        const STICKY_MODE = true;      // keep model visible when marker lost
+
+        let stableTimer = null;
+        let isTracking = false;
+        let isStable = false;
+        let lastAnchorMatrix = null;
+
+        // Utility: convert Object3D position/rotation copy using three.js objects
+        // We'll use object3D references from entities for lerp
+        const anchorObj = anchorProxy.object3D;
+        const modelObj = model.object3D;
+
+        // smoothing loop: copy anchor position/rotation with lerp
+        function smoothingLoop(){
+          if (isTracking && isStable) {
+            // position
+            modelObj.position.lerp(anchorObj.position, LERP_FACTOR);
+            // rotation: slerp quaternions
+            modelObj.quaternion.slerp(anchorObj.quaternion, LERP_FACTOR);
+            // scale copy directly (if you need to change scale dynamically)
+            // modelObj.scale.copy(anchorObj.scale);
+          }
+          requestAnimationFrame(smoothingLoop);
+        }
+
+        // Start smoothing loop immediately (it will only act when isStable true)
+        requestAnimationFrame(smoothingLoop);
+
+        // targetFound / targetLost events are emitted on the mindar-image-target entity
+        target.addEventListener('targetFound', () => {
+          status.textContent = 'Status: target found — waiting to stabilize...';
+          isTracking = true;
+          // clear previous timer
+          if (stableTimer) clearTimeout(stableTimer);
+          // start timer to check for stability before showing
+          stableTimer = setTimeout(()=>{
+            isStable = true;
+            // show model & video
+            model.setAttribute('visible', 'true');
+            aVideo.setAttribute('visible', 'true');
+            // play video if paused
+            if (compVideo.paused) {
+              compVideo.currentTime = 0; // start fresh
+              const p = compVideo.play();
+              if (p && p.catch) p.catch(()=>{ /* autoplay blocked, but user already tapped Start */ });
+            }
+            status.textContent = 'Status: stable — model & video visible';
+          }, STABILITY_MS);
+        });
+
+        target.addEventListener('targetLost', () => {
+          status.textContent = 'Status: target lost';
+          isTracking = false;
+          if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
+          isStable = false;
+
+          if (STICKY_MODE) {
+            // keep visible but stop following anchor by setting stable=false
+            // model/video remain visible at last position
+            status.textContent = 'Status: target lost — sticky mode ON (model kept at last known pose)';
+          } else {
+            // hide immediately
+            model.setAttribute('visible', 'false');
+            aVideo.setAttribute('visible', 'false');
+            // pause video to save resources
+            if (!compVideo.paused) compVideo.pause();
+          }
+        });
+
+        // Start button logic: needs a user gesture to unlock camera & video playback
+        startBtn.addEventListener('click', async () => {
+          try {
+            // Attempt to play video muted briefly to unlock auto-play on mobile
+            compVideo.muted = true;
+            await compVideo.play();
+            compVideo.pause();
+            compVideo.muted = false; // unmute if you want sound (but many browsers block sound autoplay)
+          } catch(e){
+            // ignore — still proceed to start AR permission prompt
+            console.warn('Video unlock failed (ok):', e);
+          }
+
+          // hide overlay UI
+          overlay.style.display = 'none';
+          status.textContent = 'Status: starting AR — allow camera permission if prompted';
+
+          // Start MindAR scene. MindAR's A-Frame component exposes a 'start' method via the scene's system
+          try {
+            // try multiple ways to start (compatibility)
+            if (scene && scene.systems && scene.systems['mindar-image']){
+              // A-Frame MindAR system
+              await scene.systems['mindar-image'].start();
+            } else if (scene && scene.components && scene.components['mindar-image']){
+              await scene.components['mindar-image'].start();
+            }
+          } catch(err){
+            // If start isn't available, there's still a built-in UI; show message
+            console.warn('MindAR start() failed or unavailable:', err);
+          }
+
+          status.textContent = 'Status: AR running — point camera at marker';
+        });
+
+        // Small tweak: if user re-enters page or reloads, ensure video is paused
+        window.addEventListener('pagehide', ()=>{ if (!compVideo.paused) compVideo.pause(); });
+
+        // Expose some debug helpers in dev console
+        window.__AR_DEBUG = { setLerp: (v)=>{ window.LERP = v; console.log('setLerp',v); }, model, aVideo };
+
+      })();
+    </script>
+  </div>
+</body>
+</html>
