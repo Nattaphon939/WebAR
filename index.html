@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>WebAR — Phase 3 (Career Menu)</title>
 
-  <!-- importmap + modules -->
   <script type="importmap">
   {
     "imports": {
@@ -34,12 +33,38 @@
     .corner.tr{top:calc(50% - 34vmin);right:calc(50% - 34vmin);border-left:none;border-bottom:none}
     .corner.bl{bottom:calc(50% - 34vmin);left:calc(50% - 34vmin);border-right:none;border-top:none}
     .corner.br{bottom:calc(50% - 34vmin);right:calc(50% - 34vmin);border-left:none;border-top:none}
-    /* career menu */
-    #career-menu{position:fixed;bottom:6vh;left:50%;transform:translateX(-50%);display:none;z-index:110;gap:12px;align-items:center;flex-direction:column}
-    .career-row{display:flex;gap:12px}
-    .career-btn{padding:10px 16px;border-radius:10px;border:none;background:rgba(255,255,255,0.08);color:#fff;font-weight:600;cursor:pointer}
-    .career-btn.primary{background:linear-gradient(90deg,var(--accent),#0077ff);color:#000}
-    #backBtn{position:fixed;left:12px;top:12px;display:none;z-index:120;padding:8px 10px;border-radius:8px;border:none;background:rgba(255,255,255,.06);color:#fff;cursor:pointer}
+
+    /* career menu: vertical, centered nice card */
+    #career-menu{
+      position:fixed;
+      left:50%;
+      top:50%;
+      transform:translate(-50%,-50%);
+      min-width:240px;
+      max-width:360px;
+      background:rgba(10,10,12,0.78);
+      border:1px solid rgba(0,255,255,0.12);
+      box-shadow:0 10px 30px rgba(0,0,0,0.6), 0 0 20px rgba(0,255,255,0.05);
+      padding:20px;
+      border-radius:14px;
+      z-index:150;
+      display:none;
+      flex-direction:column;
+      align-items:center;
+      gap:10px;
+      backdrop-filter: blur(6px);
+    }
+    #career-menu h2{margin:0;color:var(--accent); font-size:20px; text-shadow:0 0 6px rgba(0,188,212,0.15);}
+    .career-list{display:flex;flex-direction:column;width:100%;gap:10px;margin-top:8px;}
+    .career-btn{width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(90deg,#0077ff,#00bcd4);color:#000;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,188,212,0.08);transition:transform .12s}
+    .career-btn:active{transform:translateY(1px);}
+
+    /* return button at bottom of card */
+    #return-row{width:100%;margin-top:6px;display:flex;justify-content:center}
+    #return-btn{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.03);color:#fff;cursor:pointer}
+
+    /* back top-left */
+    #backBtn{position:fixed;left:12px;top:12px;display:none;z-index:200;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.5);color:var(--accent);cursor:pointer}
   </style>
 </head>
 <body>
@@ -58,14 +83,17 @@
     <div class="frame"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
   </div>
 
-  <!-- Career menu (shown after Computer content finished) -->
+  <!-- Career menu (centered vertical) -->
   <div id="career-menu">
-    <div style="font-weight:600;margin-bottom:8px">เลือกอาชีพ</div>
-    <div class="career-row">
+    <h2>เลือกอาชีพ</h2>
+    <div class="career-list">
       <button class="career-btn" data-career="AI">AI</button>
       <button class="career-btn" data-career="Cloud">Cloud</button>
       <button class="career-btn" data-career="Data_Center">Data Center</button>
       <button class="career-btn" data-career="Network">Network</button>
+    </div>
+    <div id="return-row">
+      <button id="return-btn">กลับไปเล่นคอนเทนต์เดิม</button>
     </div>
   </div>
 
@@ -77,10 +105,9 @@
   import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
   // ---------- CONFIG ----------
-  const JOB_ROOT = './Job'; // ตามที่คุณบอก: Job/Computer/... etc
+  const JOB_ROOT = './Job';
   const careers = ['Computer','AI','Cloud','Data_Center','Network'];
 
-  // Candidate filename lists (พยายามหลายชื่อเพื่อความทนทาน)
   const candidates = {
     Computer: { model: ['Computer-Model.glb','computer-model.glb','Computer-model.glb'], video: ['Computer.mp4','computer.mp4','Computer-Video.mp4'] },
     AI:       { model: ['ai-model.glb','AI-model.glb','ai-model.GLTF','AI-Model.glb'], video: ['Al.mp4','AI.mp4','ai.mp4','ai-video.mp4'] },
@@ -89,10 +116,8 @@
     Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
   };
 
-  // Storage for preloaded blobs/URLs
-  const assets = {}; // assets[career] = { modelBlobUrl, videoBlobUrl }
-
-  // UI nodes
+  // assets storage
+  const assets = {};
   const bar = document.getElementById('bar');
   const loadingText = document.getElementById('loading-text');
   const startButton = document.getElementById('startButton');
@@ -101,8 +126,21 @@
   const scanFrame = document.getElementById('scan-frame');
   const careerMenu = document.getElementById('career-menu');
   const backBtn = document.getElementById('backBtn');
+  const returnBtn = document.getElementById('return-btn');
 
-  // ---------- helper: try find file from candidates ----------
+  // state
+  let mindarThree, renderer, scene, camera;
+  let anchor;
+  let gltfModel = null;
+  let videoElem = null;
+  let videoMesh = null;
+  let mixer = null;
+  let clock = new THREE.Clock();
+  let playingCareer = null;   // currently playing career name (string) or null
+  let lastCareer = null;      // last career chosen/played
+  let isPausedByBack = false; // true if paused via Back button
+
+  // helpers
   async function findAndFetch(career, list) {
     for (const name of list) {
       const url = `${JOB_ROOT}/${career}/${name}`;
@@ -111,16 +149,13 @@
         if (!res.ok) continue;
         const blob = await res.blob();
         return { blob, url };
-      } catch (e) {
-        // ignore, try next
-      }
+      } catch (e) { /* try next */ }
     }
     return null;
   }
 
-  // ---------- Preload all careers (models + videos) ----------
   async function preloadAll() {
-    let total = careers.length * 2; // model + video per career
+    let total = careers.length * 2;
     let done = 0;
     function tick() {
       done++;
@@ -131,40 +166,19 @@
 
     for (const career of careers) {
       assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-
-      // model
       const m = await findAndFetch(career, candidates[career].model);
-      if (m && m.blob && m.blob.size>0) {
-        assets[career].modelBlobUrl = URL.createObjectURL(m.blob);
-      } else {
-        console.warn(`ไม่พบ model สำหรับ ${career} (ลองดูชื่อไฟล์ใน ${JOB_ROOT}/${career})`);
-      }
+      if (m && m.blob && m.blob.size>0) assets[career].modelBlobUrl = URL.createObjectURL(m.blob);
+      else console.warn(`ไม่พบ model สำหรับ ${career} -> ตรวจสอบชื่อไฟล์ใน ${JOB_ROOT}/${career}`);
       tick();
 
-      // video
       const v = await findAndFetch(career, candidates[career].video);
-      if (v && v.blob && v.blob.size>0) {
-        assets[career].videoBlobUrl = URL.createObjectURL(v.blob);
-      } else {
-        console.warn(`ไม่พบ video สำหรับ ${career} (ลองดูชื่อไฟล์ใน ${JOB_ROOT}/${career})`);
-      }
+      if (v && v.blob && v.blob.size>0) assets[career].videoBlobUrl = URL.createObjectURL(v.blob);
+      else console.warn(`ไม่พบ video สำหรับ ${career} -> ตรวจสอบชื่อไฟล์ใน ${JOB_ROOT}/${career}`);
       tick();
     }
-
-    // ensure 100%
     bar.style.width = '100%';
     loadingText.textContent = 'โหลดเสร็จแล้ว';
   }
-
-  // ---------- AR setup ----------
-  let mindarThree, renderer, scene, camera;
-  let anchor; // single anchor index 0
-  let gltfModel = null;
-  let videoElem = null;
-  let videoMesh = null;
-  let mixer = null;
-  let clock = new THREE.Clock();
-  let currentCareer = 'Computer';
 
   function createLights(scene) {
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
@@ -175,20 +189,16 @@
     scene.add(dir);
   }
 
-  // load GLTF into anchor group using blob URL
-  function loadGLTFToAnchor(blobUrl) {
-    return new Promise((resolve,reject)=>{
-      if(!blobUrl) return resolve(null);
+  function loadGLTF(blobUrl) {
+    return new Promise((resolve) => {
+      if (!blobUrl) return resolve(null);
       const loader = new GLTFLoader();
-      loader.load(blobUrl, (gltf)=>{
-        resolve(gltf);
-      }, undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
+      loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
     });
   }
 
-  // create video element from blob URL (not autoplay until marker found)
-  function createVideoElement(blobUrl) {
-    if(!blobUrl) return null;
+  function makeVideoElem(blobUrl) {
+    if (!blobUrl) return null;
     const v = document.createElement('video');
     v.src = blobUrl;
     v.crossOrigin = 'anonymous';
@@ -199,42 +209,53 @@
     return v;
   }
 
-  // place model & video: video centered, model in front-left-bottom
-  function attachContentToAnchor(gltf, video) {
-    // clear previous
-    if(gltfModel) { anchor.group.remove(gltfModel); gltfModel = null; }
-    if(videoMesh) { anchor.group.remove(videoMesh); videoMesh = null; }
-    if(videoElem) { try{ videoElem.pause(); }catch{} videoElem = null; }
+  function clearAnchorContent(keep=false) {
+    // if keep==true, we keep elements but pause video (used when pressing Back)
+    if (keep) {
+      if (videoElem) videoElem.pause();
+      isPausedByBack = true;
+      return;
+    }
 
-    // add model (if any)
-    if(gltf && gltf.scene) {
+    // full remove
+    if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
+    if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
+    if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
+    mixer = null;
+  }
+
+  function attachContentToAnchor(gltf, video) {
+    // remove existing (but do not remove if we're intentionally reusing - handled by caller)
+    if (gltfModel) { anchor.group.remove(gltfModel); gltfModel = null; }
+    if (videoMesh) { anchor.group.remove(videoMesh); videoMesh = null; }
+    if (videoElem) { try{ videoElem.pause(); } catch{} videoElem = null; }
+    mixer = null;
+
+    // model
+    if (gltf && gltf.scene) {
       gltfModel = gltf.scene;
-      // scale heuristic
       gltfModel.scale.set(0.4,0.4,0.4);
-      // put model front-left-bottom of video
+      // position front-left-bottom relative to video (set approximate)
       gltfModel.position.set(-0.25, -0.45, 0.05);
       anchor.group.add(gltfModel);
-      // animations
-      if(gltf.animations && gltf.animations.length > 0) {
+      if (gltf.animations && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(gltfModel);
         gltf.animations.forEach(c => mixer.clipAction(c).play());
       }
     }
 
-    // add video plane (portrait)
-    if(video) {
+    // video
+    if (video) {
       videoElem = video;
-      // video aspect — try detect via metadata when canplay
       const texture = new THREE.VideoTexture(videoElem);
       texture.colorSpace = THREE.SRGBColorSpace;
-      // portrait plane: width 0.6, height adjusted by aspect on play
-      const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9)); // default; we'll update on metadata
+      // default portrait plane (will fix on metadata)
+      const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
       const mat = new THREE.MeshBasicMaterial({ map: texture });
       videoMesh = new THREE.Mesh(plane, mat);
-      videoMesh.position.set(0, -0.05, 0); // center in front of anchor
+      videoMesh.position.set(0, -0.05, 0);
       anchor.group.add(videoMesh);
 
-      // when metadata loaded, fix plane ratio
       videoElem.onloadedmetadata = () => {
         try {
           const asp = videoElem.videoWidth / videoElem.videoHeight || (9/16);
@@ -242,49 +263,42 @@
           const height = width / asp;
           videoMesh.geometry.dispose();
           videoMesh.geometry = new THREE.PlaneGeometry(width, height);
-          // position slightly so model sits front-left-bottom
           videoMesh.position.set(0, 0, 0);
-          if(gltfModel) gltfModel.position.set(-0.25, -height/2 - 0.1, 0.05);
-        } catch(e) { /* ignore */ }
+          if (gltfModel) gltfModel.position.set(-0.25, -height/2 - 0.1, 0.05);
+        } catch(e){}
+      };
+
+      // when career video ends -> cleanup and show menu
+      videoElem.onended = () => {
+        // set lastCareer to the career that just finished (playingCareer)
+        lastCareer = playingCareer;
+        // fully remove content
+        clearAnchorContent(false);
+        playingCareer = null;
+        isPausedByBack = false;
+        // show menu
+        careerMenu.style.display = 'flex';
+        backBtn.style.display = 'none';
       };
     }
   }
 
-  // remove computer content (cleanup)
-  function removeComputerContent() {
-    if(gltfModel) { anchor.group.remove(gltfModel); gltfModel = null; }
-    if(videoMesh) { anchor.group.remove(videoMesh); videoMesh = null; }
-    if(videoElem) { try { videoElem.pause(); videoElem.src = ''; } catch(e){} videoElem = null; }
-  }
-
   // ---------- main flow ----------
   async function main() {
-    // preload everything first
     await preloadAll();
-
-    // show start button
     startButton.style.display = 'inline-block';
     startButton.addEventListener('click', onStartClick);
   }
 
   async function onStartClick() {
-    // request permission to enable autoplay of audio on some browsers
-    try {
-      await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-    } catch(e){
-      console.warn('Permission denied or unavailable:', e);
-      // still continue (many browsers allow camera prompt later)
-    }
-
-    // hide loading, show container
+    try { await navigator.mediaDevices.getUserMedia({video:true,audio:true}); } catch(e){ console.warn('permission',e); }
     loadingScreen.style.display = 'none';
     container.style.display = 'block';
-    scanFrame.style.display = 'flex'; // show scanning frame until target found
+    scanFrame.style.display = 'flex';
 
-    // init MindAR
     mindarThree = new MindARThree({
       container: container,
-      imageTargetSrc: `${JOB_ROOT}/Computer/marker.mind`, // we use computer marker as primary target
+      imageTargetSrc: `${JOB_ROOT}/Computer/marker.mind`,
       sticky: true,
       filterMinCF: 0.0001,
       filterBeta: 0.005
@@ -292,105 +306,120 @@
     ({renderer, scene, camera} = mindarThree);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     createLights(scene);
-
     anchor = mindarThree.addAnchor(0);
 
-    // prepare Computer content from preloaded blobs
-    const cAssets = assets['Computer'] || {};
-    const computerModelUrl = cAssets.modelBlobUrl;
-    const computerVideoUrl = cAssets.videoBlobUrl;
+    // attach Computer (initial) from preloaded assets
+    const comp = assets['Computer'] || {};
+    const g = await loadGLTF(comp.modelBlobUrl);
+    const v = makeVideoElem(comp.videoBlobUrl);
+    attachContentToAnchor(g, v);
+    playingCareer = 'Computer';
+    lastCareer = 'Computer';
 
-    // load gltf (blob url)
-    const gltf = await loadGLTFToAnchor(computerModelUrl);
-    const vidElem = createVideoElement(computerVideoUrl);
-
-    attachContentToAnchor(gltf, vidElem);
-
-    // ensure sticky: anchor.group.visible always true even if marker lost
+    // on target found -> start video (synchronized)
     anchor.onTargetFound = () => {
       scanFrame.style.display = 'none';
-      // play synchronization: start model animations already running via mixer; start video only now
-      if(videoElem && videoElem.paused) {
+      if (videoElem && videoElem.paused) {
         try { videoElem.currentTime = 0; } catch(e){}
-        const playPromise = videoElem.play();
-        if (playPromise && playPromise.catch) {
-          playPromise.catch(err => console.warn('video play prevented:', err));
-        }
+        const p = videoElem.play();
+        if (p && p.catch) p.catch(e=>console.warn('play prevented',e));
       }
     };
 
-    // ensure not removing when lost
     anchor.onTargetLost = () => {
-      // do nothing — sticky mode keeps content visible in last transform
-      // but still keep scanFrame hidden
+      // sticky: do nothing, content remains visible at last transform
       scanFrame.style.display = 'none';
     };
 
-    // start renderer
     await mindarThree.start();
-    renderer.setAnimationLoop( ( ) => {
+    renderer.setAnimationLoop(()=> {
       const delta = clock.getDelta();
-      if(mixer) mixer.update(delta);
+      if (mixer) mixer.update(delta);
       renderer.render(scene, camera);
     });
 
-    // when video ends => remove Computer content and show career menu
-    if(videoElem) {
-      videoElem.addEventListener('ended', onComputerEnded);
-    } else {
-      // if no video available: fallback show menu after 4s
-      setTimeout(onComputerEnded, 4000);
-    }
+    // when Computer video ends -> remove and show menu (attachContentToAnchor already handles onended)
   }
 
-  function onComputerEnded() {
-    // cleanup computer content
-    removeComputerContent();
-
-    // show career menu
-    careerMenu.style.display = 'flex';
-    backBtn.style.display = 'none';
-  }
-
-  // ---------- career selection actions ----------
+  // ---------- career interactions ----------
   async function playCareer(career) {
-    // hide menu
+    // Called when user selects a career from menu
+    // If currently playing a different career, remove that content entirely
+    // If currently paused and lastCareer==career and we have attached content, resume it
     careerMenu.style.display = 'none';
     backBtn.style.display = 'inline-block';
 
-    // remove any existing content in anchor
-    if(gltfModel){ anchor.group.remove(gltfModel); gltfModel = null; }
-    if(videoMesh){ anchor.group.remove(videoMesh); videoMesh = null; }
-    if(videoElem){ try{ videoElem.pause(); }catch{} videoElem = null; }
+    // if same career already playing and paused -> resume
+    if (playingCareer === career && isPausedByBack && videoElem) {
+      isPausedByBack = false;
+      try { videoElem.play(); } catch(e){ console.warn(e); }
+      return;
+    }
 
-    // get assets preloaded
+    // if another career currently playing -> remove it fully
+    if (playingCareer && playingCareer !== career) {
+      clearAnchorContent(false);
+      playingCareer = null;
+      isPausedByBack = false;
+    }
+
+    // load assets for this career
     const a = assets[career] || {};
-    const modelUrl = a.modelBlobUrl;
-    const videoUrl = a.videoBlobUrl;
+    const gltf = await loadGLTF(a.modelBlobUrl);
+    const vid = makeVideoElem(a.videoBlobUrl);
 
-    // load and attach
-    const gltf = await loadGLTFToAnchor(modelUrl);
-    const vid = createVideoElement(videoUrl);
     attachContentToAnchor(gltf, vid);
 
-    // if marker already found (sticky), play immediately
-    if(vid) {
-      try{ vid.currentTime = 0; }catch{}
-      const p = vid.play();
-      if(p && p.catch) p.catch(e => console.warn('play blocked',e));
-    }
+    // set states
+    playingCareer = career;
+    lastCareer = career;
+    isPausedByBack = false;
+
+    // if marker already visible/sticky -> play immediately
+    try {
+      if (videoElem) {
+        try{ videoElem.currentTime = 0; }catch{}
+        const p = videoElem.play();
+        if (p && p.catch) p.catch(e=>console.warn('play blocked',e));
+      }
+    } catch(e){}
   }
 
-  // back: stop current career content and show menu
-  function goBackToMenu() {
-    if(videoElem){ try{ videoElem.pause(); }catch{} }
-    if(gltfModel){ anchor.group.remove(gltfModel); gltfModel = null; }
-    if(videoMesh){ anchor.group.remove(videoMesh); videoMesh = null; }
+  function pauseAndShowMenu() {
+    // Back button behavior from content -> pause current (keep in scene), show menu
+    if (videoElem) {
+      try { videoElem.pause(); } catch(e){ console.warn(e); }
+    }
+    isPausedByBack = true;
     careerMenu.style.display = 'flex';
     backBtn.style.display = 'none';
   }
 
-  // wire UI career buttons
+  function returnToLast() {
+    // Called when pressing Return in menu: resume lastCareer
+    if (!lastCareer) return;
+    // if current attached content is lastCareer and paused => resume
+    if (playingCareer === lastCareer && isPausedByBack && videoElem) {
+      careerMenu.style.display = 'none';
+      backBtn.style.display = 'inline-block';
+      isPausedByBack = false;
+      try { videoElem.play(); } catch(e){ console.warn(e); }
+      return;
+    }
+    // else, (re)play lastCareer from start
+    playCareer(lastCareer);
+  }
+
+  function removeCurrentAndShowMenu() {
+    // utility to remove current playing content fully and show menu
+    clearAnchorContent(false);
+    playingCareer = null;
+    isPausedByBack = false;
+    careerMenu.style.display = 'flex';
+    backBtn.style.display = 'none';
+  }
+
+  // wire UI
   document.querySelectorAll('.career-btn').forEach(btn=>{
     btn.addEventListener('click', ()=> {
       const c = btn.dataset.career;
@@ -398,9 +427,16 @@
     });
   });
 
-  backBtn.addEventListener('click', goBackToMenu);
+  backBtn.addEventListener('click', ()=> {
+    // pause current and return to menu
+    pauseAndShowMenu();
+  });
 
-  // ---------- start main ----------
+  returnBtn.addEventListener('click', ()=> {
+    returnToLast();
+  });
+
+  // start
   main();
 
   </script>
