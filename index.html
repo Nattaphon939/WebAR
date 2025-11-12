@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WEB AR - Computer Stable Sync v3</title>
+  <title>WEB AR - Computer Vertical Video</title>
 
   <script type="importmap">
   {
@@ -148,7 +148,7 @@
 
     const anchor = mindarThree.addAnchor(0);
 
-    let mixer, video, videoMesh;
+    let mixer, video, videoMesh, model;
     const clock = new THREE.Clock();
     let hasPlayed = false;
 
@@ -158,8 +158,9 @@
       loader.load(
         "./Job/Computer/Computer-Model.glb",
         (gltf) => {
-          const model = gltf.scene;
+          model = gltf.scene;
           model.scale.set(0.5, 0.5, 0.5);
+          model.position.set(-0.25, -0.3, 0.05); // ชิดขอบซ้ายของวิดีโอ
           anchor.group.add(model);
           if (gltf.animations.length > 0) {
             mixer = new THREE.AnimationMixer(model);
@@ -175,7 +176,7 @@
       );
     });
 
-    // โหลดวิดีโอ (แบบ blob ปลอดภัยบนมือถือ)
+    // โหลดวิดีโอแนวตั้ง (1080x1920)
     const loadVideo = async () => {
       const res = await fetch("./Job/Computer/Computer.mp4");
       const blob = await res.blob();
@@ -190,15 +191,12 @@
       return vid;
     };
 
-    // เริ่มโหลด
     const initialize = async () => {
       console.log("🚀 Loading model...");
       await loadModel();
       console.log("✅ Model ready. Showing button...");
       progressBar.style.width = "100%";
       startButton.style.display = "block";
-
-      // เริ่มโหลด video ต่อ (background)
       loadVideo().then(v => video = v);
     };
 
@@ -208,14 +206,15 @@
       await mindarThree.start();
       scanFrame.style.display = "block";
 
-      // รอ video โหลดเสร็จ
       if (!video) {
         video = await loadVideo();
       }
 
       const texture = new THREE.VideoTexture(video);
       texture.colorSpace = THREE.SRGBColorSpace;
-      const geometry = new THREE.PlaneGeometry(0.6, 0.6 * (9/16));
+
+      // 🔹 วิดีโอแนวตั้ง (9:16)
+      const geometry = new THREE.PlaneGeometry(0.6, 0.6 * (16 / 9));
       const material = new THREE.MeshBasicMaterial({ map: texture });
       videoMesh = new THREE.Mesh(geometry, material);
       videoMesh.position.set(0, -0.3, 0);
