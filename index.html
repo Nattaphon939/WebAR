@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WEB AR - Computer Stable Sync v2</title>
+  <title>WEB AR - Computer Stable Sync v3</title>
 
   <script type="importmap">
   {
@@ -32,6 +32,7 @@
       width: 100vw;
       height: 100vh;
       overflow: hidden;
+      display: none;
     }
 
     #loading-screen {
@@ -75,6 +76,8 @@
       font-size: 1.1rem;
       border-radius: 10px;
       cursor: pointer;
+      position: relative;
+      z-index: 1000;
     }
 
     #scan-frame {
@@ -90,6 +93,7 @@
       animation: pulse 2s infinite ease-in-out;
       z-index: 5;
       pointer-events: none;
+      display: none;
     }
 
     @keyframes pulse {
@@ -120,10 +124,11 @@
     const startButton = document.getElementById("startButton");
     const loadingScreen = document.getElementById("loading-screen");
     const scanFrame = document.getElementById("scan-frame");
+    const container = document.getElementById("container");
 
-    // เริ่มระบบ MindAR
+    // MindAR init
     const mindarThree = new MindARThree({
-      container: document.querySelector("#container"),
+      container,
       imageTargetSrc: "./Job/Computer/marker.mind",
       sticky: true,
       filterMinCF: 0.001,
@@ -133,89 +138,84 @@
     const { renderer, scene, camera } = mindarThree;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    // เพิ่มแสงให้โมเดลไม่ดำ
+    // Lights
     const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
-    hemiLight.position.set(0, 1, 0);
-    scene.add(hemiLight);
-
     const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    hemiLight.position.set(0, 1, 0);
     dirLight.position.set(0, 1, 1);
+    scene.add(hemiLight);
     scene.add(dirLight);
 
     const anchor = mindarThree.addAnchor(0);
 
     let mixer, video, videoMesh;
-    let clock = new THREE.Clock();
+    const clock = new THREE.Clock();
     let hasPlayed = false;
 
     // โหลดโมเดล
-    const loadModel = () => {
-      return new Promise((resolve, reject) => {
-        const loader = new GLTFLoader();
-        loader.load(
-          "./Job/Computer/Computer-Model.glb",
-          (gltf) => {
-            const model = gltf.scene;
-            model.scale.set(0.5, 0.5, 0.5);
-            model.position.set(0, 0, 0);
-            anchor.group.add(model);
-
-            if (gltf.animations && gltf.animations.length > 0) {
-              mixer = new THREE.AnimationMixer(model);
-              gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
-            }
-            resolve();
-          },
-          (xhr) => {
-            const progress = (xhr.loaded / xhr.total) * 100;
-            progressBar.style.width = `${progress}%`;
-          },
-          (err) => {
-            console.error("⚠️ Model load error:", err);
-            reject(err);
+    const loadModel = () => new Promise((resolve, reject) => {
+      const loader = new GLTFLoader();
+      loader.load(
+        "./Job/Computer/Computer-Model.glb",
+        (gltf) => {
+          const model = gltf.scene;
+          model.scale.set(0.5, 0.5, 0.5);
+          anchor.group.add(model);
+          if (gltf.animations.length > 0) {
+            mixer = new THREE.AnimationMixer(model);
+            gltf.animations.forEach(a => mixer.clipAction(a).play());
           }
-        );
-      });
+          resolve();
+        },
+        (xhr) => {
+          const percent = xhr.total ? (xhr.loaded / xhr.total) * 100 : 50;
+          progressBar.style.width = `${percent}%`;
+        },
+        (err) => reject(err)
+      );
+    });
+
+    // โหลดวิดีโอ (แบบ blob ปลอดภัยบนมือถือ)
+    const loadVideo = async () => {
+      const res = await fetch("./Job/Computer/Computer.mp4");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const vid = document.createElement("video");
+      vid.src = url;
+      vid.loop = false;
+      vid.playsInline = true;
+      vid.crossOrigin = "anonymous";
+      vid.muted = false;
+      vid.preload = "auto";
+      return vid;
     };
 
-    // โหลดวิดีโอ
-    const loadVideo = () => {
-      return new Promise((resolve, reject) => {
-        video = document.createElement("video");
-        video.src = "./Job/Computer/Computer.mp4";
-        video.crossOrigin = "anonymous";
-        video.loop = false;
-        video.muted = false;
-        video.playsInline = true;
-        video.preload = "auto";
-        video.oncanplaythrough = () => resolve(video);
-        video.onerror = (e) => reject(e);
-      });
-    };
-
+    // เริ่มโหลด
     const initialize = async () => {
-      try {
-        await Promise.all([loadModel(), loadVideo()]);
-        progressBar.style.width = "100%";
-        setTimeout(() => {
-          startButton.style.display = "block";
-        }, 500);
-      } catch (e) {
-        console.warn("⚠️ Asset preload warning:", e);
-      }
+      console.log("🚀 Loading model...");
+      await loadModel();
+      console.log("✅ Model ready. Showing button...");
+      progressBar.style.width = "100%";
+      startButton.style.display = "block";
+
+      // เริ่มโหลด video ต่อ (background)
+      loadVideo().then(v => video = v);
     };
 
     const startAR = async () => {
       loadingScreen.style.display = "none";
+      container.style.display = "block";
       await mindarThree.start();
       scanFrame.style.display = "block";
 
-      // เตรียม texture สำหรับวิดีโอ (แนวตั้ง)
+      // รอ video โหลดเสร็จ
+      if (!video) {
+        video = await loadVideo();
+      }
+
       const texture = new THREE.VideoTexture(video);
       texture.colorSpace = THREE.SRGBColorSpace;
-
-      const videoAspect = 1080 / 1920;
-      const geometry = new THREE.PlaneGeometry(0.6, 0.6 / videoAspect);
+      const geometry = new THREE.PlaneGeometry(0.6, 0.6 * (9/16));
       const material = new THREE.MeshBasicMaterial({ map: texture });
       videoMesh = new THREE.Mesh(geometry, material);
       videoMesh.position.set(0, -0.3, 0);
@@ -227,7 +227,6 @@
         renderer.render(scene, camera);
       });
 
-      // เมื่อ marker เจอ → เริ่มเล่นทุกอย่างพร้อมกัน
       anchor.onTargetFound = () => {
         scanFrame.style.display = "none";
         if (!hasPlayed) {
@@ -237,7 +236,6 @@
         }
       };
 
-      // marker หาย → คงโมเดลและวิดีโอไว้
       anchor.onTargetLost = () => {
         anchor.group.visible = true;
       };
