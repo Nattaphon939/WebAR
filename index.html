@@ -236,6 +236,15 @@
     return v;
   }
 
+  // helper to reset local rotation/quaternion for the model root (so it inherits anchor.group rotation)
+  function resetModelLocalRotation(obj) {
+    try {
+      obj.rotation.set(0,0,0);
+      obj.quaternion.set(0,0,0,1);
+      obj.updateMatrixWorld(true);
+    } catch(e) { /* ignore */ }
+  }
+
   function clearAnchorContent(keep=false) {
     // if keep==true, we keep elements but pause video & animations (used when pressing Back)
     if (keep) {
@@ -272,14 +281,12 @@
       gltfModel.scale.set(0.4,0.4,0.4);
       // keep approximate X/Z as before; Y will be adjusted to align feet to video bottom
       gltfModel.position.set(-0.25, -0.45, 0.05);
+
+      // add directly to anchor.group (same behaviour as your working Computer content)
       anchor.group.add(gltfModel);
 
       // IMPORTANT: reset model local rotation/quaternion so it inherits anchor.group rotation same as Computer
-      try {
-        gltfModel.rotation.set(0,0,0);
-        gltfModel.quaternion.set(0,0,0,1);
-        gltfModel.updateMatrixWorld(true);
-      } catch(e){}
+      resetModelLocalRotation(gltfModel);
 
       if (gltf.animations && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(gltfModel);
@@ -339,7 +346,7 @@
             gltfModel.position.y += deltaY + UP_NUDGE;
 
             // ensure model local rotation still identity after reposition
-            try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); } catch(e){}
+            resetModelLocalRotation(gltfModel);
           }
         } catch(e){ console.warn('onloadedmetadata align err', e); }
       };
