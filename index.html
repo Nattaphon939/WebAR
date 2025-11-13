@@ -59,6 +59,10 @@
     .career-btn{width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(90deg,#0077ff,#00bcd4);color:#000;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,188,212,0.08);transition:transform .12s}
     .career-btn:active{transform:translateY(1px);}
 
+    /* career actions (shown after selecting a career except Computer) */
+    #career-actions{width:100%;display:none;flex-direction:column;gap:8px;margin-top:8px}
+    .action-btn{width:100%;padding:10px;border-radius:10px;border:none;background:rgba(255,255,255,0.06);color:#fff;font-weight:700;cursor:pointer}
+
     /* return button at bottom of card */
     #return-row{width:100%;margin-top:6px;display:flex;justify-content:center}
     #return-btn{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.03);color:#fff;cursor:pointer}
@@ -92,6 +96,14 @@
       <button class="career-btn" data-career="Data_Center">Data Center</button>
       <button class="career-btn" data-career="Network">Network</button>
     </div>
+
+    <!-- action buttons appear when a non-Computer career is active -->
+    <div id="career-actions">
+      <button id="game-btn" class="action-btn">🎮 Memory Match Game</button>
+      <button id="survey-btn" class="action-btn">📝 แบบสำรวจ (Google Form)</button>
+      <button id="contact-btn" class="action-btn">📞 หากสนใจติดต่อ</button>
+    </div>
+
     <div id="return-row">
       <button id="return-btn">กลับไปเล่นคอนเทนต์เดิม</button>
     </div>
@@ -127,6 +139,10 @@
   const careerMenu = document.getElementById('career-menu');
   const backBtn = document.getElementById('backBtn');
   const returnBtn = document.getElementById('return-btn');
+  const careerActions = document.getElementById('career-actions');
+  const gameBtn = document.getElementById('game-btn');
+  const surveyBtn = document.getElementById('survey-btn');
+  const contactBtn = document.getElementById('contact-btn');
 
   // state
   let mindarThree, renderer, scene, camera;
@@ -210,25 +226,33 @@
   }
 
   function clearAnchorContent(keep=false) {
-    // if keep==true, we keep elements but pause video (used when pressing Back)
+    // if keep==true, we keep elements but pause video & animations (used when pressing Back)
     if (keep) {
-      if (videoElem) videoElem.pause();
+      if (videoElem) {
+        try { videoElem.pause(); } catch(e){}
+      }
+      if (mixer) {
+        try { mixer.timeScale = 0; } catch(e){}
+      }
       isPausedByBack = true;
       return;
     }
 
-    // full remove
+    // full remove: stop animation mixer properly
+    if (mixer) {
+      try { mixer.stopAllAction(); } catch(e){}
+      mixer = null;
+    }
     if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
     if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
     if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
-    mixer = null;
   }
 
   function attachContentToAnchor(gltf, video) {
     // remove existing (but do not remove if we're intentionally reusing - handled by caller)
-    if (gltfModel) { anchor.group.remove(gltfModel); gltfModel = null; }
-    if (videoMesh) { anchor.group.remove(videoMesh); videoMesh = null; }
-    if (videoElem) { try{ videoElem.pause(); } catch{} videoElem = null; }
+    if (gltfModel) { try{ anchor.group.remove(gltfModel); } catch(e){} gltfModel = null; }
+    if (videoMesh) { try{ anchor.group.remove(videoMesh); } catch(e){} videoMesh = null; }
+    if (videoElem) { try{ videoElem.pause(); } catch(e){} videoElem = null; }
     mixer = null;
 
     // model
@@ -241,6 +265,7 @@
       if (gltf.animations && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(gltfModel);
         gltf.animations.forEach(c => mixer.clipAction(c).play());
+        mixer.timeScale = 1; // ensure playing
       }
     }
 
@@ -276,7 +301,8 @@
         clearAnchorContent(false);
         playingCareer = null;
         isPausedByBack = false;
-        // show menu
+        // show menu (and hide actions)
+        careerActions.style.display = 'none';
         careerMenu.style.display = 'flex';
         backBtn.style.display = 'none';
       };
@@ -315,6 +341,7 @@
     attachContentToAnchor(g, v);
     playingCareer = 'Computer';
     lastCareer = 'Computer';
+    careerActions.style.display = 'none';
 
     // on target found -> start video (synchronized)
     anchor.onTargetFound = () => {
@@ -324,6 +351,11 @@
         const p = videoElem.play();
         if (p && p.catch) p.catch(e=>console.warn('play prevented',e));
       }
+      // resume animations if paused by back
+      if (mixer && isPausedByBack) {
+        try { mixer.timeScale = 1; } catch(e){}
+      }
+      isPausedByBack = false;
     };
 
     anchor.onTargetLost = () => {
@@ -344,15 +376,26 @@
   // ---------- career interactions ----------
   async function playCareer(career) {
     // Called when user selects a career from menu
-    // If currently playing a different career, remove that content entirely
-    // If currently paused and lastCareer==career and we have attached content, resume it
-    careerMenu.style.display = 'none';
+
+    // show back button (to pause/return)
     backBtn.style.display = 'inline-block';
+
+    // show actions for non-Computer (we still prepare them, but menu will be hidden as requested)
+    if (career !== 'Computer') {
+      careerActions.style.display = 'flex';
+    } else {
+      careerActions.style.display = 'none';
+    }
+
+    // close the career menu (user requested: after selecting, close the selection card)
+    careerMenu.style.display = 'none';
 
     // if same career already playing and paused -> resume
     if (playingCareer === career && isPausedByBack && videoElem) {
       isPausedByBack = false;
+      // resume video + animations
       try { videoElem.play(); } catch(e){ console.warn(e); }
+      if (mixer) try { mixer.timeScale = 1; } catch(e){}
       return;
     }
 
@@ -382,6 +425,7 @@
         const p = videoElem.play();
         if (p && p.catch) p.catch(e=>console.warn('play blocked',e));
       }
+      if (mixer) try { mixer.timeScale = 1; } catch(e){}
     } catch(e){}
   }
 
@@ -390,7 +434,12 @@
     if (videoElem) {
       try { videoElem.pause(); } catch(e){ console.warn(e); }
     }
+    if (mixer) {
+      try { mixer.timeScale = 0; } catch(e){ console.warn(e); }
+    }
     isPausedByBack = true;
+    // show career-actions while in menu only if a non-Computer career is paused
+    careerActions.style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
     careerMenu.style.display = 'flex';
     backBtn.style.display = 'none';
   }
@@ -400,10 +449,13 @@
     if (!lastCareer) return;
     // if current attached content is lastCareer and paused => resume
     if (playingCareer === lastCareer && isPausedByBack && videoElem) {
-      careerMenu.style.display = 'none';
+      careerMenu.style.display = 'flex';
       backBtn.style.display = 'inline-block';
       isPausedByBack = false;
       try { videoElem.play(); } catch(e){ console.warn(e); }
+      if (mixer) try { mixer.timeScale = 1; } catch(e){}
+      // show actions if lastCareer is not Computer
+      if (lastCareer !== 'Computer') careerActions.style.display = 'flex';
       return;
     }
     // else, (re)play lastCareer from start
@@ -415,6 +467,7 @@
     clearAnchorContent(false);
     playingCareer = null;
     isPausedByBack = false;
+    careerActions.style.display = 'none';
     careerMenu.style.display = 'flex';
     backBtn.style.display = 'none';
   }
@@ -434,6 +487,24 @@
 
   returnBtn.addEventListener('click', ()=> {
     returnToLast();
+  });
+
+  // action buttons behavior (placeholders - replace URLs as needed)
+  gameBtn.addEventListener('click', ()=> {
+    // close menu if visible, then open game
+    careerMenu.style.display = 'none';
+    backBtn.style.display = 'inline-block';
+    window.open('game.html', '_blank');
+  });
+  surveyBtn.addEventListener('click', ()=> {
+    careerMenu.style.display = 'none';
+    backBtn.style.display = 'inline-block';
+    window.open('https://forms.gle/', '_blank');
+  });
+  contactBtn.addEventListener('click', ()=> {
+    careerMenu.style.display = 'none';
+    backBtn.style.display = 'inline-block';
+    window.open('#', '_blank');
   });
 
   // start
