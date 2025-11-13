@@ -260,7 +260,7 @@
       gltfModel = gltf.scene;
       gltfModel.scale.set(0.4,0.4,0.4);
       // position front-left-bottom relative to video (set approximate)
-      gltfModel.position.set(-0.25, -0.45, 0.05);
+      gltfModel.position.set(-0.25, 0 , 0.05);
       anchor.group.add(gltfModel);
       if (gltf.animations && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(gltfModel);
@@ -368,6 +368,7 @@
       const delta = clock.getDelta();
       if (mixer) mixer.update(delta);
       renderer.render(scene, camera);
+      anchor.group.lookAt(camera.position);
     });
 
     // when Computer video ends -> remove and show menu (attachContentToAnchor already handles onended)
