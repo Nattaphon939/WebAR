@@ -156,6 +156,10 @@
   let lastCareer = null;      // last career chosen/played
   let isPausedByBack = false; // true if paused via Back button
 
+  // new state for scan-control
+  let awaitingScanCareer = null; // when set, we wait for next onTargetFound to attach this career
+  let scanningPaused = false;    // when true, onTargetFound does nothing (used while menu visible)
+
   // --- variables for smooth look-at & alignment (added) ---
   const tmpObj = new THREE.Object3D();
   const tmpQuat = new THREE.Quaternion();
@@ -236,6 +240,15 @@
     return v;
   }
 
+  // helper to reset local rotation/quaternion for the model root (so it inherits anchor.group rotation)
+  function resetModelLocalRotation(obj) {
+    try {
+      obj.rotation.set(0,0,0);
+      obj.quaternion.set(0,0,0,1);
+      obj.updateMatrixWorld(true);
+    } catch(e) { /* ignore */ }
+  }
+
   function clearAnchorContent(keep=false) {
     // if keep==true, we keep elements but pause video & animations (used when pressing Back)
     if (keep) {
@@ -259,6 +272,7 @@
     if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
   }
 
+  // Attach content (same behavior as before)
   function attachContentToAnchor(gltf, video) {
     // remove existing (but do not remove if we're intentionally reusing - handled by caller)
     if (gltfModel) { try{ anchor.group.remove(gltfModel); } catch(e){} gltfModel = null; }
@@ -272,14 +286,12 @@
       gltfModel.scale.set(0.4,0.4,0.4);
       // keep approximate X/Z as before; Y will be adjusted to align feet to video bottom
       gltfModel.position.set(-0.25, -0.45, 0.05);
+
+      // add directly to anchor.group
       anchor.group.add(gltfModel);
 
-      // IMPORTANT: reset model local rotation/quaternion so it inherits anchor.group rotation same as Computer
-      try {
-        gltfModel.rotation.set(0,0,0);
-        gltfModel.quaternion.set(0,0,0,1);
-        gltfModel.updateMatrixWorld(true);
-      } catch(e){}
+      // reset local rotation so it inherits anchor.group rotation
+      resetModelLocalRotation(gltfModel);
 
       if (gltf.animations && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(gltfModel);
@@ -301,7 +313,7 @@
       videoMesh.position.set(0, -0.05, 0);
       anchor.group.add(videoMesh);
 
-      // Ensure video mesh local rotation reset so it follows anchor.group like Computer
+      // Ensure video mesh local rotation reset so it follows anchor.group
       try {
         videoMesh.rotation.set(0,0,0);
         videoMesh.quaternion.set(0,0,0,1);
@@ -339,23 +351,23 @@
             gltfModel.position.y += deltaY + UP_NUDGE;
 
             // ensure model local rotation still identity after reposition
-            try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); } catch(e){}
+            resetModelLocalRotation(gltfModel);
           }
         } catch(e){ console.warn('onloadedmetadata align err', e); }
       };
 
       // when career video ends -> cleanup and show menu
       videoElem.onended = () => {
-        // set lastCareer to the career that just finished (playingCareer)
         lastCareer = playingCareer;
-        // fully remove content
         clearAnchorContent(false);
         playingCareer = null;
         isPausedByBack = false;
-        // show menu (and hide actions)
         careerActions.style.display = 'none';
+        // show menu and pause scanning while menu visible
         careerMenu.style.display = 'flex';
         backBtn.style.display = 'none';
+        scanningPaused = true;
+        scanFrame.style.display = 'none';
       };
     }
   }
@@ -371,7 +383,9 @@
     try { await navigator.mediaDevices.getUserMedia({video:true,audio:true}); } catch(e){ console.warn('permission',e); }
     loadingScreen.style.display = 'none';
     container.style.display = 'block';
+    // show scan UI initially
     scanFrame.style.display = 'flex';
+    scanningPaused = false;
 
     mindarThree = new MindARThree({
       container: container,
@@ -385,24 +399,35 @@
     createLights(scene);
     anchor = mindarThree.addAnchor(0);
 
-    // attach Computer (initial) from preloaded assets
-    const comp = assets['Computer'] || {};
-    const g = await loadGLTF(comp.modelBlobUrl);
-    const v = makeVideoElem(comp.videoBlobUrl);
-    attachContentToAnchor(g, v);
-    playingCareer = 'Computer';
-    lastCareer = 'Computer';
-    careerActions.style.display = 'none';
+    // on target found -> either start waiting career or resume existing content
+    anchor.onTargetFound = async () => {
+      // if scanning paused (menu visible), ignore target found
+      if (scanningPaused) return;
 
-    // on target found -> start video (synchronized)
-    anchor.onTargetFound = () => {
+      // if awaiting a career selection (user pressed career) -> attach that career's content now
+      if (awaitingScanCareer) {
+        const career = awaitingScanCareer;
+        awaitingScanCareer = null;
+        // load assets for this career and attach
+        const a = assets[career] || {};
+        const gltf = await loadGLTF(a.modelBlobUrl);
+        const vid = makeVideoElem(a.videoBlobUrl);
+        attachContentToAnchor(gltf, vid);
+        playingCareer = career;
+        lastCareer = career;
+        isPausedByBack = false;
+        // hide scan frame when found and content attached
+        scanFrame.style.display = 'none';
+        return;
+      }
+
+      // else normal resume behavior for already attached content
       scanFrame.style.display = 'none';
       if (videoElem && videoElem.paused) {
         try { videoElem.currentTime = 0; } catch(e){}
         const p = videoElem.play();
         if (p && p.catch) p.catch(e=>console.warn('play prevented',e));
       }
-      // resume animations if paused by back
       if (mixer && isPausedByBack) {
         try { mixer.timeScale = 1; } catch(e){}
       }
@@ -410,9 +435,18 @@
     };
 
     anchor.onTargetLost = () => {
-      // sticky: do nothing, content remains visible at last transform
+      // sticky mode: we keep content visible but hide scan frame UI
       scanFrame.style.display = 'none';
     };
+
+    // attach Computer (initial) from preloaded assets (no re-scan needed)
+    const comp = assets['Computer'] || {};
+    const g = await loadGLTF(comp.modelBlobUrl);
+    const v = makeVideoElem(comp.videoBlobUrl);
+    attachContentToAnchor(g, v);
+    playingCareer = 'Computer';
+    lastCareer = 'Computer';
+    careerActions.style.display = 'none';
 
     await mindarThree.start();
     renderer.setAnimationLoop(()=> {
@@ -422,13 +456,10 @@
       // --- SMOOTH LOOK-AT (make anchor.group rotate smoothly to face camera) ---
       try {
         if (anchor && anchor.group && camera) {
-          // position tmpObj at anchor group world position and have it look at camera
           tmpObj.position.copy(anchor.group.getWorldPosition(new THREE.Vector3()));
           tmpObj.lookAt(camera.position);
           tmpObj.updateMatrixWorld();
-          tmpObj.getWorldQuaternion(tmpQuat); // world quaternion that faces camera
-
-          // convert world quaternion to anchor.group local quaternion
+          tmpObj.getWorldQuaternion(tmpQuat);
           if (anchor.group.parent) {
             anchor.group.parent.getWorldQuaternion(parentWorldQuat);
             parentWorldQuat.invert();
@@ -436,76 +467,41 @@
           } else {
             targetLocalQuat.copy(tmpQuat);
           }
-
-          // slerp current quaternion -> targetLocalQuat (smooth)
           anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
         }
       } catch(e) { /* non-fatal */ }
 
       renderer.render(scene, camera);
     });
-
-    // when Computer video ends -> remove and show menu (attachContentToAnchor already handles onended)
   }
 
   // ---------- career interactions ----------
   async function playCareer(career) {
-    // Called when user selects a career from menu
+    // New behavior:
+    // 1) close menu
+    // 2) remove currently playing content (full remove) so next scan attaches fresh content
+    // 3) set awaitingScanCareer = career and enable scanning (show scan frame)
 
-    // show back button (to pause/return)
+    // show back button (still available to return to menu while waiting)
     backBtn.style.display = 'inline-block';
 
-    // show actions for non-Computer (we still prepare them, but menu will be hidden as requested)
-    if (career !== 'Computer') {
-      careerActions.style.display = 'flex';
-    } else {
-      careerActions.style.display = 'none';
-    }
-
-    // close the career menu (user requested: after selecting, close the selection card)
+    // hide career menu and disable automatic menu scanning while menu hidden? we want scanning ON now
     careerMenu.style.display = 'none';
+    careerActions.style.display = 'none';
 
-    // if same career already playing and paused -> resume
-    if (playingCareer === career && isPausedByBack && videoElem) {
-      isPausedByBack = false;
-      // resume video + animations
-      try { videoElem.play(); } catch(e){ console.warn(e); }
-      if (mixer) try { mixer.timeScale = 1; } catch(e){}
-      return;
-    }
-
-    // if another career currently playing -> remove it fully
-    if (playingCareer && playingCareer !== career) {
-      clearAnchorContent(false);
-      playingCareer = null;
-      isPausedByBack = false;
-    }
-
-    // load assets for this career
-    const a = assets[career] || {};
-    const gltf = await loadGLTF(a.modelBlobUrl);
-    const vid = makeVideoElem(a.videoBlobUrl);
-
-    attachContentToAnchor(gltf, vid);
-
-    // set states
-    playingCareer = career;
-    lastCareer = career;
+    // remove current content fully
+    clearAnchorContent(false);
+    playingCareer = null;
     isPausedByBack = false;
 
-    // if marker already visible/sticky -> play immediately
-    try {
-      if (videoElem) {
-        try{ videoElem.currentTime = 0; }catch{}
-        const p = videoElem.play();
-        if (p && p.catch) p.catch(e=>console.warn('play blocked',e));
-      }
-      if (mixer) try { mixer.timeScale = 1; } catch(e){}
-    } catch(e){}
+    // set awaiting career and enable scanning UI
+    awaitingScanCareer = career;
+    scanningPaused = false;
+    scanFrame.style.display = 'flex';
   }
 
   function pauseAndShowMenu() {
-    // Back button behavior from content -> pause current (keep in scene), show menu
+    // pause current content and show menu (while menu is visible, we disable scan)
     if (videoElem) {
       try { videoElem.pause(); } catch(e){ console.warn(e); }
     }
@@ -513,38 +509,40 @@
       try { mixer.timeScale = 0; } catch(e){ console.warn(e); }
     }
     isPausedByBack = true;
-    // show career-actions while in menu only if a non-Computer career is paused
+    scanningPaused = true; // important: while menu shown, ignore scanning
     careerActions.style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
     careerMenu.style.display = 'flex';
     backBtn.style.display = 'none';
+    // hide scan UI when menu is up
+    scanFrame.style.display = 'none';
   }
 
   function returnToLast() {
-    // Called when pressing Return in menu: resume lastCareer
+    // resume lastCareer (if paused) or re-play it (we choose to re-scan to keep consistent? we'll resume if paused)
     if (!lastCareer) return;
-    // if current attached content is lastCareer and paused => resume
     if (playingCareer === lastCareer && isPausedByBack && videoElem) {
       careerMenu.style.display = 'flex';
       backBtn.style.display = 'inline-block';
       isPausedByBack = false;
       try { videoElem.play(); } catch(e){ console.warn(e); }
       if (mixer) try { mixer.timeScale = 1; } catch(e){}
-      // show actions if lastCareer is not Computer
       if (lastCareer !== 'Computer') careerActions.style.display = 'flex';
       return;
     }
-    // else, (re)play lastCareer from start
+    // else we re-play lastCareer by initiating a re-scan flow (keeps behavior consistent)
     playCareer(lastCareer);
   }
 
   function removeCurrentAndShowMenu() {
-    // utility to remove current playing content fully and show menu
+    // utility to remove current playing content fully and show menu (menu disables scanning)
     clearAnchorContent(false);
     playingCareer = null;
     isPausedByBack = false;
     careerActions.style.display = 'none';
     careerMenu.style.display = 'flex';
     backBtn.style.display = 'none';
+    scanningPaused = true;
+    scanFrame.style.display = 'none';
   }
 
   // wire UI
@@ -566,7 +564,6 @@
 
   // action buttons behavior (placeholders - replace URLs as needed)
   gameBtn.addEventListener('click', ()=> {
-    // close menu if visible, then open game
     careerMenu.style.display = 'none';
     backBtn.style.display = 'inline-block';
     window.open('game.html', '_blank');
