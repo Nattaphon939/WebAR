@@ -273,6 +273,14 @@
       // keep approximate X/Z as before; Y will be adjusted to align feet to video bottom
       gltfModel.position.set(-0.25, -0.45, 0.05);
       anchor.group.add(gltfModel);
+
+      // IMPORTANT: reset model local rotation/quaternion so it inherits anchor.group rotation same as Computer
+      try {
+        gltfModel.rotation.set(0,0,0);
+        gltfModel.quaternion.set(0,0,0,1);
+        gltfModel.updateMatrixWorld(true);
+      } catch(e){}
+
       if (gltf.animations && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(gltfModel);
         gltf.animations.forEach(c => mixer.clipAction(c).play());
@@ -292,6 +300,13 @@
       // set slightly lower initially; onloadedmetadata updates geometry & positions
       videoMesh.position.set(0, -0.05, 0);
       anchor.group.add(videoMesh);
+
+      // Ensure video mesh local rotation reset so it follows anchor.group like Computer
+      try {
+        videoMesh.rotation.set(0,0,0);
+        videoMesh.quaternion.set(0,0,0,1);
+        videoMesh.updateMatrixWorld(true);
+      } catch(e){}
 
       videoElem.onloadedmetadata = () => {
         try {
@@ -319,8 +334,12 @@
             const videoBottomLocalY = worldPos.y - (height / 2);
             // delta to move model so its min.y sits at videoBottomLocalY
             const deltaY = videoBottomLocalY - worldMin.y;
-            gltfModel.position.y += deltaY;
-            // maintain X/Z offset as desired (we keep original X/Z)
+            // nudge up a bit so it's not clipped
+            const UP_NUDGE = 0.02;
+            gltfModel.position.y += deltaY + UP_NUDGE;
+
+            // ensure model local rotation still identity after reposition
+            try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); } catch(e){}
           }
         } catch(e){ console.warn('onloadedmetadata align err', e); }
       };
