@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WebAR — Phase 3 (Career Menu) - fixed</title>
+  <title>WebAR — Phase 3 (Career Menu)</title>
 
   <script type="importmap">
   {
@@ -83,7 +83,7 @@
   <div id="container"></div>
 
   <!-- scan overlay -->
-  <div id="scan-frame" style="display:none;">
+  <div id="scan-frame">
     <div class="frame"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
   </div>
 
@@ -147,7 +147,6 @@
   // state
   let mindarThree, renderer, scene, camera;
   let anchor;
-  let anchorContent = null; // <-- container for current content (so it inherits anchor.group rotation reliably)
   let gltfModel = null;
   let videoElem = null;
   let videoMesh = null;
@@ -237,76 +236,55 @@
     return v;
   }
 
-  // remove current anchorContent and children
-  function disposeAnchorContent() {
-    if (anchorContent) {
-      try {
-        // stop mixer
-        if (mixer) {
-          mixer.stopAllAction();
-          mixer = null;
-        }
-        // remove meshes
-        anchorContent.traverse((c) => {
-          if (c.isMesh) {
-            if (c.geometry) c.geometry.dispose();
-            if (c.material && c.material.map) { c.material.map.dispose(); }
-            if (c.material) c.material.dispose();
-          }
-        });
-        anchor.group.remove(anchorContent);
-      } catch(e){ /* ignore */ }
-      anchorContent = null;
-      gltfModel = null;
-      videoMesh = null;
-      if (videoElem) {
-        try { videoElem.pause(); videoElem.src = ''; } catch(e){}
-        videoElem = null;
-      }
-    }
-  }
-
-  // helper to reset local rotation/quaternion for the model root (so it inherits anchor.group rotation)
-  function resetLocalIdentity(obj) {
-    try {
-      obj.rotation.set(0,0,0);
-      obj.quaternion.set(0,0,0,1);
-      obj.updateMatrixWorld(true);
-    } catch(e) { /* ignore */ }
-  }
-
   function clearAnchorContent(keep=false) {
-    // if keep==true, pause only
+    // if keep==true, we keep elements but pause video & animations (used when pressing Back)
     if (keep) {
-      if (videoElem) try { videoElem.pause(); } catch(e){ }
-      if (mixer) try { mixer.timeScale = 0; } catch(e){}
+      if (videoElem) {
+        try { videoElem.pause(); } catch(e){}
+      }
+      if (mixer) {
+        try { mixer.timeScale = 0; } catch(e){}
+      }
       isPausedByBack = true;
       return;
     }
-    // full remove
-    disposeAnchorContent();
-    isPausedByBack = false;
+
+    // full remove: stop animation mixer properly
+    if (mixer) {
+      try { mixer.stopAllAction(); } catch(e){}
+      mixer = null;
+    }
+    if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
+    if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
+    if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
   }
 
   function attachContentToAnchor(gltf, video) {
-    // fully remove previous content then create anchorContent
-    disposeAnchorContent();
-    anchorContent = new THREE.Object3D();
-    anchor.group.add(anchorContent);
+    // remove existing (but do not remove if we're intentionally reusing - handled by caller)
+    if (gltfModel) { try{ anchor.group.remove(gltfModel); } catch(e){} gltfModel = null; }
+    if (videoMesh) { try{ anchor.group.remove(videoMesh); } catch(e){} videoMesh = null; }
+    if (videoElem) { try{ videoElem.pause(); } catch(e){} videoElem = null; }
+    mixer = null;
+
     // model
     if (gltf && gltf.scene) {
       gltfModel = gltf.scene;
-      // reset local rotation so it's neutral in anchorContent local space
-      resetLocalIdentity(gltfModel);
-      // scale/position defaults (tweak per model if needed)
       gltfModel.scale.set(0.4,0.4,0.4);
+      // keep approximate X/Z as before; Y will be adjusted to align feet to video bottom
       gltfModel.position.set(-0.25, -0.45, 0.05);
-      anchorContent.add(gltfModel);
+      anchor.group.add(gltfModel);
+
+      // IMPORTANT: reset model local rotation/quaternion so it inherits anchor.group rotation same as Computer
+      try {
+        gltfModel.rotation.set(0,0,0);
+        gltfModel.quaternion.set(0,0,0,1);
+        gltfModel.updateMatrixWorld(true);
+      } catch(e){}
 
       if (gltf.animations && gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(gltfModel);
         gltf.animations.forEach(c => mixer.clipAction(c).play());
-        mixer.timeScale = 1;
+        mixer.timeScale = 1; // ensure playing
       }
     }
 
@@ -315,12 +293,20 @@
       videoElem = video;
       const texture = new THREE.VideoTexture(videoElem);
       texture.colorSpace = THREE.SRGBColorSpace;
+      // default portrait plane (will fix on metadata)
       const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
       const mat = new THREE.MeshBasicMaterial({ map: texture });
       videoMesh = new THREE.Mesh(plane, mat);
-      resetLocalIdentity(videoMesh);
+      // set slightly lower initially; onloadedmetadata updates geometry & positions
       videoMesh.position.set(0, -0.05, 0);
-      anchorContent.add(videoMesh);
+      anchor.group.add(videoMesh);
+
+      // Ensure video mesh local rotation reset so it follows anchor.group like Computer
+      try {
+        videoMesh.rotation.set(0,0,0);
+        videoMesh.quaternion.set(0,0,0,1);
+        videoMesh.updateMatrixWorld(true);
+      } catch(e){}
 
       videoElem.onloadedmetadata = () => {
         try {
@@ -328,35 +314,45 @@
           const width = 0.6;
           const height = width / asp;
           // update plane to real aspect
-          if (videoMesh.geometry) videoMesh.geometry.dispose();
+          videoMesh.geometry.dispose();
           videoMesh.geometry = new THREE.PlaneGeometry(width, height);
           videoMesh.position.set(0, 0, 0);
 
-          // align model feet to video bottom (compute in anchorContent local space)
+          // --- ALIGN: place model so its feet (bbox.min.y) sit at video bottom edge ---
           if (gltfModel) {
+            // ensure world matrices are updated
             gltfModel.updateMatrixWorld(true);
+            // compute model bounding box in world space
             bbox.setFromObject(gltfModel);
-            // bbox.min is in world space: convert to anchorContent local
+            // copy world min then convert to anchor.group local coords
             worldMin.copy(bbox.min);
-            anchorContent.worldToLocal(worldMin);
-            // video world position -> anchorContent local
-            worldPos.set(0,0,0);
+            anchor.group.worldToLocal(worldMin); // now worldMin is in anchor.group local space
+            // compute video bottom in anchor.group local space
+            worldPos.set(0, 0, 0);
             videoMesh.getWorldPosition(worldPos);
-            anchorContent.worldToLocal(worldPos);
-            const videoBottomLocalY = worldPos.y - (height/2);
+            anchor.group.worldToLocal(worldPos);
+            const videoBottomLocalY = worldPos.y - (height / 2);
+            // delta to move model so its min.y sits at videoBottomLocalY
             const deltaY = videoBottomLocalY - worldMin.y;
+            // nudge up a bit so it's not clipped
             const UP_NUDGE = 0.02;
             gltfModel.position.y += deltaY + UP_NUDGE;
-            resetLocalIdentity(gltfModel); // keep local rotation identity
+
+            // ensure model local rotation still identity after reposition
+            try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); } catch(e){}
           }
         } catch(e){ console.warn('onloadedmetadata align err', e); }
       };
 
+      // when career video ends -> cleanup and show menu
       videoElem.onended = () => {
+        // set lastCareer to the career that just finished (playingCareer)
         lastCareer = playingCareer;
+        // fully remove content
         clearAnchorContent(false);
         playingCareer = null;
         isPausedByBack = false;
+        // show menu (and hide actions)
         careerActions.style.display = 'none';
         careerMenu.style.display = 'flex';
         backBtn.style.display = 'none';
@@ -375,10 +371,7 @@
     try { await navigator.mediaDevices.getUserMedia({video:true,audio:true}); } catch(e){ console.warn('permission',e); }
     loadingScreen.style.display = 'none';
     container.style.display = 'block';
-
-    // show scan frame initially (until marker found)
     scanFrame.style.display = 'flex';
-    careerMenu.style.display = 'none'; // ensure menu hidden at start
 
     mindarThree = new MindARThree({
       container: container,
@@ -392,7 +385,7 @@
     createLights(scene);
     anchor = mindarThree.addAnchor(0);
 
-    // attach Computer (initial) from preloaded assets (so it behaves like original)
+    // attach Computer (initial) from preloaded assets
     const comp = assets['Computer'] || {};
     const g = await loadGLTF(comp.modelBlobUrl);
     const v = makeVideoElem(comp.videoBlobUrl);
@@ -401,14 +394,15 @@
     lastCareer = 'Computer';
     careerActions.style.display = 'none';
 
+    // on target found -> start video (synchronized)
     anchor.onTargetFound = () => {
-      // hide scan UI when found
       scanFrame.style.display = 'none';
       if (videoElem && videoElem.paused) {
         try { videoElem.currentTime = 0; } catch(e){}
         const p = videoElem.play();
         if (p && p.catch) p.catch(e=>console.warn('play prevented',e));
       }
+      // resume animations if paused by back
       if (mixer && isPausedByBack) {
         try { mixer.timeScale = 1; } catch(e){}
       }
@@ -416,9 +410,8 @@
     };
 
     anchor.onTargetLost = () => {
-      // sticky: do not immediately remove content; show scanFrame so user can re-scan if needed
-      // Only show scan frame if menu is not visible
-      if (careerMenu.style.display === 'none') scanFrame.style.display = 'flex';
+      // sticky: do nothing, content remains visible at last transform
+      scanFrame.style.display = 'none';
     };
 
     await mindarThree.start();
@@ -429,6 +422,7 @@
       // --- SMOOTH LOOK-AT (make anchor.group rotate smoothly to face camera) ---
       try {
         if (anchor && anchor.group && camera) {
+          // position tmpObj at anchor group world position and have it look at camera
           tmpObj.position.copy(anchor.group.getWorldPosition(new THREE.Vector3()));
           tmpObj.lookAt(camera.position);
           tmpObj.updateMatrixWorld();
@@ -450,20 +444,42 @@
 
       renderer.render(scene, camera);
     });
+
+    // when Computer video ends -> remove and show menu (attachContentToAnchor already handles onended)
   }
 
   // ---------- career interactions ----------
   async function playCareer(career) {
-    // When user chooses career: close menu, remove current content, attach selected content immediately (no re-scan)
-    // If you want re-scan-before-play behavior, we can change this; current choice: play immediately and rely on sticky/anchor presence.
+    // Called when user selects a career from menu
 
+    // show back button (to pause/return)
     backBtn.style.display = 'inline-block';
-    careerMenu.style.display = 'none';
-    // show actions for non-Computer
-    careerActions.style.display = (career !== 'Computer') ? 'flex' : 'none';
 
-    // remove existing content fully
-    clearAnchorContent(false);
+    // show actions for non-Computer (we still prepare them, but menu will be hidden as requested)
+    if (career !== 'Computer') {
+      careerActions.style.display = 'flex';
+    } else {
+      careerActions.style.display = 'none';
+    }
+
+    // close the career menu (user requested: after selecting, close the selection card)
+    careerMenu.style.display = 'none';
+
+    // if same career already playing and paused -> resume
+    if (playingCareer === career && isPausedByBack && videoElem) {
+      isPausedByBack = false;
+      // resume video + animations
+      try { videoElem.play(); } catch(e){ console.warn(e); }
+      if (mixer) try { mixer.timeScale = 1; } catch(e){}
+      return;
+    }
+
+    // if another career currently playing -> remove it fully
+    if (playingCareer && playingCareer !== career) {
+      clearAnchorContent(false);
+      playingCareer = null;
+      isPausedByBack = false;
+    }
 
     // load assets for this career
     const a = assets[career] || {};
@@ -472,11 +488,12 @@
 
     attachContentToAnchor(gltf, vid);
 
+    // set states
     playingCareer = career;
     lastCareer = career;
     isPausedByBack = false;
 
-    // if marker already visible -> play immediately
+    // if marker already visible/sticky -> play immediately
     try {
       if (videoElem) {
         try{ videoElem.currentTime = 0; }catch{}
@@ -488,7 +505,7 @@
   }
 
   function pauseAndShowMenu() {
-    // pause current and show menu (menu disables scan by hiding scanFrame)
+    // Back button behavior from content -> pause current (keep in scene), show menu
     if (videoElem) {
       try { videoElem.pause(); } catch(e){ console.warn(e); }
     }
@@ -496,34 +513,38 @@
       try { mixer.timeScale = 0; } catch(e){ console.warn(e); }
     }
     isPausedByBack = true;
+    // show career-actions while in menu only if a non-Computer career is paused
     careerActions.style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
     careerMenu.style.display = 'flex';
     backBtn.style.display = 'none';
-    scanFrame.style.display = 'none';
   }
 
   function returnToLast() {
+    // Called when pressing Return in menu: resume lastCareer
     if (!lastCareer) return;
+    // if current attached content is lastCareer and paused => resume
     if (playingCareer === lastCareer && isPausedByBack && videoElem) {
       careerMenu.style.display = 'flex';
       backBtn.style.display = 'inline-block';
       isPausedByBack = false;
       try { videoElem.play(); } catch(e){ console.warn(e); }
       if (mixer) try { mixer.timeScale = 1; } catch(e){}
+      // show actions if lastCareer is not Computer
       if (lastCareer !== 'Computer') careerActions.style.display = 'flex';
       return;
     }
+    // else, (re)play lastCareer from start
     playCareer(lastCareer);
   }
 
   function removeCurrentAndShowMenu() {
+    // utility to remove current playing content fully and show menu
     clearAnchorContent(false);
     playingCareer = null;
     isPausedByBack = false;
     careerActions.style.display = 'none';
     careerMenu.style.display = 'flex';
     backBtn.style.display = 'none';
-    scanFrame.style.display = 'none';
   }
 
   // wire UI
@@ -535,6 +556,7 @@
   });
 
   backBtn.addEventListener('click', ()=> {
+    // pause current and return to menu
     pauseAndShowMenu();
   });
 
@@ -542,7 +564,9 @@
     returnToLast();
   });
 
+  // action buttons behavior (placeholders - replace URLs as needed)
   gameBtn.addEventListener('click', ()=> {
+    // close menu if visible, then open game
     careerMenu.style.display = 'none';
     backBtn.style.display = 'inline-block';
     window.open('game.html', '_blank');
@@ -560,6 +584,7 @@
 
   // start
   main();
+
   </script>
 </body>
 </html>
