@@ -41,7 +41,12 @@ const targetLocalQuat = new THREE.Quaternion();
 const bbox = new THREE.Box3();
 const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
+// keep SMOOTH_FACTOR for compatibility but we will use immediate rotation
 const SMOOTH_FACTOR = 0.12;
+
+// jitter helpers (reuse to avoid allocations every frame)
+const jitterEuler = new THREE.Euler();
+const jitterQuat = new THREE.Quaternion();
 
 // helpers (same logic)
 async function findAndFetch(career, list) {
@@ -197,11 +202,16 @@ function attachContentToAnchor(gltf, video) {
     };
 
     videoElem.onended = () => {
+      // When video ends: show career menu, and show action buttons if last was non-Computer
       lastCareer = playingCareer;
       clearAnchorContent(false);
       playingCareer = null;
       isPausedByBack = false;
-      if (careerActions()) careerActions().style.display = 'none';
+      if (lastCareer && lastCareer !== 'Computer' && careerActions()) {
+        careerActions().style.display = 'flex';
+      } else if (careerActions()) {
+        careerActions().style.display = 'none';
+      }
       if (careerMenu()) careerMenu().style.display = 'flex';
       if (backBtn()) backBtn().style.display = 'none';
     };
@@ -258,6 +268,7 @@ export async function initAndStart(containerElement) {
 
     try {
       if (anchor && anchor.group && camera) {
+        // compute target rotation so the anchor faces the camera (immediate)
         tmpObj.position.copy(anchor.group.getWorldPosition(new THREE.Vector3()));
         tmpObj.lookAt(camera.position);
         tmpObj.updateMatrixWorld();
@@ -271,7 +282,19 @@ export async function initAndStart(containerElement) {
           targetLocalQuat.copy(tmpQuat);
         }
 
-        anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
+        // immediate rotation (no slerp) with a small controlled jitter to avoid mechanical "still" look
+        const t = performance.now() * 0.001;
+        // jitter values: small angles in radians
+        jitterEuler.set(
+          Math.sin(t * 9.1) * 0.003,    // small X wobble
+          Math.sin(t * 7.5) * 0.006,    // slightly larger Y wobble
+          Math.cos(t * 11.3) * 0.002    // tiny Z wobble
+        );
+        jitterQuat.setFromEuler(jitterEuler);
+
+        // apply jitter on a copy so targetLocalQuat stays clean for next frame
+        tmpQuat.copy(targetLocalQuat).multiply(jitterQuat);
+        anchor.group.quaternion.copy(tmpQuat);
       }
     } catch(e) { /* non-fatal */ }
 
