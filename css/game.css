@@ -15,7 +15,7 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
   height:100%;
   object-fit:cover;
   z-index:0;
-  transform:scaleX(-1); /* mirror for front-camera feel; remove if unwanted */
+  transform:scaleX(-1);
   background:#000;
 }
 
@@ -32,11 +32,7 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
 .game-area{flex:1;display:flex;align-items:center;justify-content:center;pointer-events:auto;padding-bottom:12px}
 .board{width:100%;max-width:980px;display:grid;gap:10px;padding:6px}
 
-/* responsive columns:
-   - phone: 3 columns (12 cards => 4 rows)
-   - small tablet: 4 columns
-   - desktop: 6 columns
-*/
+/* responsive columns */
 @media (max-width:520px){
   .board{grid-template-columns:repeat(3,1fr);gap:8px}
   .game-header h1{font-size:16px}
@@ -77,3 +73,68 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
 .start-card p{margin:0 0 12px 0;color:#cfeeff;font-size:14px}
 .start-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 .start-actions button{padding:10px 12px;border-radius:10px;border:none;background:var(--accent);color:#000;font-weight:700;cursor:pointer;font-size:14px}
+
+/* --- Score overlay + confetti + buttons --- */
+.score-overlay {
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:10006;
+  pointer-events:none;
+}
+.score-card {
+  background: linear-gradient(90deg,var(--accent),#0077ff);
+  color: #000;
+  padding: 18px 22px;
+  border-radius: 14px;
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.6);
+  transform-origin: center;
+  pointer-events:auto;
+  width:90%;
+  max-width:360px;
+}
+.score-card h3 { margin: 0 0 6px 0; font-size:16px; color:#00131a; }
+.score-number { font-size:36px; letter-spacing:1px; margin-top:6px; color:#00131a; }
+
+/* score controls */
+.score-controls { display:flex;gap:10px;margin-top:12px;justify-content:center }
+.score-btn {
+  padding:8px 12px;border-radius:10px;border:none;background:#00131a;color:var(--accent);font-weight:800;cursor:pointer;
+}
+
+/* confetti pieces */
+.confetti {
+  position:fixed;
+  width:10px;
+  height:18px;
+  opacity:0.95;
+  z-index:10005;
+  pointer-events:none;
+  transform-origin: center;
+  will-change: transform, opacity;
+  border-radius:2px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+@keyframes confetti-fall {
+  0% { transform: translateY(-10vh) rotate(0deg) translateX(0); opacity:1 }
+  60% { opacity:1 }
+  100% { transform: translateY(120vh) rotate(600deg) translateX(var(--tx)); opacity:0.9 }
+}
+@keyframes confetti-sway {
+  0% { transform: translateX(0) rotate(0deg) }
+  50% { transform: translateX(var(--sx)) rotate(90deg) }
+  100% { transform: translateX(0) rotate(180deg) }
+}
+
+/* small sparkle on score */
+.score-pulse { animation: pulse 900ms cubic-bezier(.2,.9,.3,1) 1; }
+@keyframes pulse {
+  0% { transform: scale(.9); opacity:0.6 }
+  60% { transform: scale(1.08); opacity:1 }
+  100% { transform: scale(1); opacity:1 }
+}
