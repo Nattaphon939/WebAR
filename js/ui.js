@@ -26,14 +26,14 @@ export function initUI() {
   const contactBtn = document.getElementById('contact-btn');
 
   if (gameBtn) gameBtn.addEventListener('click', async ()=> {
-    // pause AR content to avoid conflicts
     try { AR.pauseAndShowMenu(); } catch(e){}
 
-    // hide career menu
     const careerMenu = document.getElementById('career-menu');
     if (careerMenu) careerMenu.style.display = 'none';
 
-    // create overlay container if not exists
+    const scanFrame = document.getElementById('scan-frame');
+    if (scanFrame) scanFrame.style.display = 'none';
+
     let overlay = document.getElementById('game-overlay');
     if (!overlay) {
       overlay = document.createElement('div');
@@ -48,26 +48,14 @@ export function initUI() {
       document.body.appendChild(overlay);
     }
 
-    // add a strict CSS rule to hide scan-frame completely while overlay exists
-    // (this uses !important to override inline styles from AR)
-    let hideScanStyle = document.getElementById('hide-scan-style');
-    if (!hideScanStyle) {
-      hideScanStyle = document.createElement('style');
-      hideScanStyle.id = 'hide-scan-style';
-      hideScanStyle.textContent = '#scan-frame { display: none !important; }';
-      document.head.appendChild(hideScanStyle);
-    }
-
-    // fetch game.html
     try {
       const res = await fetch('game.html');
+      if (!res.ok) throw new Error('game.html not found');
       const htmlText = await res.text();
 
-      // parse fetched HTML
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlText, 'text/html');
 
-      // copy stylesheet(s) from fetched head to document.head (if not already)
       const links = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
       links.forEach(link => {
         const href = link.getAttribute('href');
@@ -80,10 +68,8 @@ export function initUI() {
         }
       });
 
-      // insert body content into overlay
       overlay.innerHTML = doc.body.innerHTML;
 
-      // add a close button (top-left) to overlay (keep only ✕)
       let closeBtn = overlay.querySelector('#game-close-btn');
       if (!closeBtn) {
         closeBtn = document.createElement('button');
@@ -105,16 +91,17 @@ export function initUI() {
         overlay.appendChild(closeBtn);
       }
 
-      // inject game module script if not present
-      if (!document.querySelector('script[data-game-module]')) {
-        const s = document.createElement('script');
-        s.type = 'module';
-        s.src = 'js/game.js';
-        s.setAttribute('data-game-module','1');
-        document.body.appendChild(s);
+      const existingScript = document.querySelector('script[data-game-module]');
+      if (existingScript) {
+        try { existingScript.remove(); } catch(e){}
       }
 
-      // close handler: stop any camera in overlay and remove overlay
+      const s = document.createElement('script');
+      s.type = 'module';
+      s.src = 'js/game.js?ts=' + Date.now(); // cache-bust
+      s.setAttribute('data-game-module','1');
+      document.body.appendChild(s);
+
       closeBtn.addEventListener('click', ()=> {
         try {
           const vid = overlay.querySelector('video');
@@ -127,28 +114,33 @@ export function initUI() {
           }
         } catch(e){ console.warn(e); }
 
-        // remove overlay
         try { overlay.remove(); } catch(e){}
-        // show career menu and ensure backBtn remains hidden
+
+        const scr = document.querySelector('script[data-game-module]');
+        if (scr) try { scr.remove(); } catch(e){}
+
+        const scoreOv = document.getElementById('score-overlay');
+        if (scoreOv) try { scoreOv.remove(); } catch(e){}
+        document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
+
         if (careerMenu) careerMenu.style.display = 'flex';
+        const careerActions = document.getElementById('career-actions');
+        if (careerActions) careerActions.style.display = 'flex';
+
         if (backBtn) backBtn.style.display = 'none';
+        const returnBtn2 = document.getElementById('return-btn');
+        if (returnBtn2) returnBtn2.style.display = 'none';
 
-        // remove the style that hid the scan-frame so AR can show it again if needed
-        const hideScanStyle2 = document.getElementById('hide-scan-style');
-        if (hideScanStyle2) hideScanStyle2.remove();
-
-        // optionally restore scan-frame to flex (AR may manage it later)
-        const scanFrame = document.getElementById('scan-frame');
-        if (scanFrame) scanFrame.style.display = 'flex';
+        const scanFrame2 = document.getElementById('scan-frame');
+        if (scanFrame2) scanFrame2.style.display = 'flex';
       });
 
     } catch (e) {
       console.error('failed loading game.html', e);
       alert('ไม่สามารถโหลดเกมได้ โปรดตรวจสอบว่ามีไฟล์ game.html ในโฟลเดอร์เดียวกับหน้าเว็บ');
       if (careerMenu) careerMenu.style.display = 'flex';
-      // remove hide-scan-style if fetch fails
-      const hideScanStyle2 = document.getElementById('hide-scan-style');
-      if (hideScanStyle2) hideScanStyle2.remove();
+      const careerActions = document.getElementById('career-actions');
+      if (careerActions) careerActions.style.display = 'flex';
     }
   });
 

@@ -1,5 +1,5 @@
 // js/game.js
-// Memory Match game — final version with persistent score overlay + play again / back to menu
+// Memory Match game — updated: robust mute (mutes all audio elements, stops audio immediately)
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 2;
@@ -33,13 +33,20 @@ let currentPlayingAudio = null; // for stopping previous audio
 let totalMovesAccum = 0;
 let totalSecondsAccum = 0;
 
-// SFX: use explicit win.mp3 and fallback others
+// keep reference to every Audio created so we can mute/unmute globally
+const allAudioElements = new Set();
+
+// SFX: try wav then mp3 fallback
 function maybeCreateAudioPaths(basePaths) {
   for (const p of basePaths) {
     try {
       const a = new Audio(p);
       a.preload = 'auto';
+      // default muted state follows current isMuted
+      a.muted = isMuted;
+      a.volume = isMuted ? 0 : 1;
       a.addEventListener('error', ()=>{ /* ignore */ });
+      allAudioElements.add(a);
       return a;
     } catch(e){}
   }
@@ -49,22 +56,50 @@ const sfx = {
   flip: maybeCreateAudioPaths(['game_assets/sfx/flip.wav','game_assets/sfx/flip.mp3']),
   match: maybeCreateAudioPaths(['game_assets/sfx/match.wav','game_assets/sfx/match.mp3']),
   wrong: maybeCreateAudioPaths(['game_assets/sfx/wrong.wav','game_assets/sfx/wrong.mp3']),
-  // explicit mp3 for final win per your note
   win: maybeCreateAudioPaths(['game_assets/sfx/win.mp3','game_assets/sfx/win.wav'])
 };
 
+// apply mute/unmute to all tracked audio elements (including ones created later that are added to the Set)
+function applyMuteToAll(muted) {
+  allAudioElements.forEach(a => {
+    try {
+      a.muted = muted;
+      if (muted) {
+        try { a.volume = 0; } catch(e){}
+      } else {
+        try { a.volume = 1; } catch(e){}
+      }
+    } catch(e){}
+  });
+}
+
+// safe play: respects isMuted and audio.muted
 function safePlay(audio) {
-  if (!audio || isMuted) return;
+  if (!audio) return;
+  if (isMuted) return;
   try { audio.currentTime = 0; } catch(e){}
   const p = audio.play();
   if (p && p.catch) p.catch(()=>{});
 }
 
+// stop current word/meaning audio
 function stopCurrentPlaying() {
   if (currentPlayingAudio) {
     try { currentPlayingAudio.pause(); currentPlayingAudio.currentTime = 0; } catch(e){}
     currentPlayingAudio = null;
   }
+}
+
+// stop all audio: currentPlaying + all sfx + any tracked audio
+function stopAllAudio() {
+  stopCurrentPlaying();
+  try {
+    allAudioElements.forEach(a => {
+      if (a) {
+        try { a.pause(); a.currentTime = 0; } catch(e){}
+      }
+    });
+  } catch(e){}
 }
 
 function startTimer() {
@@ -158,9 +193,32 @@ function createCardElement(cardObj){
   inner.appendChild(front);
   el.appendChild(inner);
 
-  el._wordAudio = cardObj.wordAudio ? maybeCreateAudioPaths([cardObj.wordAudio, cardObj.wordAudio.replace('.wav','.mp3')]) : null;
-  el._meaningAudio = cardObj.meaningAudio ? maybeCreateAudioPaths([cardObj.meaningAudio, cardObj.meaningAudio.replace('.wav','.mp3')]) : null;
+  // prepare audio objects and track them
+  if (cardObj.wordAudio) {
+    try {
+      const wa = new Audio(cardObj.wordAudio);
+      wa.preload = 'auto';
+      wa.muted = isMuted;
+      wa.volume = isMuted ? 0 : 1;
+      wa.addEventListener('error', ()=>{});
+      el._wordAudio = wa;
+      allAudioElements.add(wa);
+    } catch(e){ el._wordAudio = null; }
+  } else el._wordAudio = null;
 
+  if (cardObj.meaningAudio) {
+    try {
+      const ma = new Audio(cardObj.meaningAudio);
+      ma.preload = 'auto';
+      ma.muted = isMuted;
+      ma.volume = isMuted ? 0 : 1;
+      ma.addEventListener('error', ()=>{});
+      el._meaningAudio = ma;
+      allAudioElements.add(ma);
+    } catch(e){ el._meaningAudio = null; }
+  } else el._meaningAudio = null;
+
+  // click handler — robust
   el.addEventListener('click', ()=> onCardClick(el, cardObj));
   return el;
 }
@@ -176,22 +234,28 @@ function renderBoard(){
 }
 
 function onCardClick(el, cardObj){
+  // safety guards
   if (lockBoard) return;
   if (el === firstCard) return;
+  if (el.classList.contains('flipped')) return; // prevent double-flip bug
   if (el.classList.contains('matched')) return;
 
+  // flip visual
   el.classList.add('flipped');
 
-  // stop previously playing (word/meaning)
+  // stop previously playing word/meaning
   stopCurrentPlaying();
 
   safePlay(sfx.flip);
 
-  if (el._wordAudio) {
+  // play word audio only if not muted and audio exists
+  if (el._wordAudio && !isMuted) {
     currentPlayingAudio = el._wordAudio;
     try { currentPlayingAudio.currentTime = 0; } catch(e){}
     const p = currentPlayingAudio.play();
     if (p && p.catch) p.catch(()=>{});
+  } else {
+    currentPlayingAudio = null;
   }
 
   if (!firstCard){
@@ -210,12 +274,17 @@ function onCardClick(el, cardObj){
     setTimeout(()=> onMatch(firstCard, secondCard), 350);
   } else {
     setTimeout(()=>{
+      // add wrong animation
       firstCard.classList.add('wrong');
       secondCard.classList.add('wrong');
       safePlay(sfx.wrong);
+
       setTimeout(()=>{
-        firstCard.classList.remove('flipped','wrong');
-        secondCard.classList.remove('flipped','wrong');
+        // only unflip if they are not matched
+        if (!firstCard.classList.contains('matched')) firstCard.classList.remove('flipped');
+        if (!secondCard.classList.contains('matched')) secondCard.classList.remove('flipped');
+        firstCard.classList.remove('wrong');
+        secondCard.classList.remove('wrong');
         resetSelection();
       }, 420);
     }, 300);
@@ -224,16 +293,25 @@ function onCardClick(el, cardObj){
 
 function onMatch(a,b){
   safePlay(sfx.match);
+  // stop any playing word audio before meaning
   stopCurrentPlaying();
 
-  a.classList.add('matched'); b.classList.add('matched');
-  a.style.pointerEvents = 'none'; b.style.pointerEvents = 'none';
+  // ensure both stay flipped and marked matched
+  a.classList.add('matched','flipped');
+  b.classList.add('matched','flipped');
 
-  if (a._meaningAudio) {
+  // disable further interactions
+  a.style.pointerEvents = 'none';
+  b.style.pointerEvents = 'none';
+
+  // play meaning audio if exists (and not muted)
+  if (a._meaningAudio && !isMuted) {
     currentPlayingAudio = a._meaningAudio;
     try { currentPlayingAudio.currentTime = 0; } catch(e){}
     const p = currentPlayingAudio.play();
     if (p && p.catch) p.catch(()=>{});
+  } else {
+    currentPlayingAudio = null;
   }
 
   matches++;
@@ -254,8 +332,8 @@ function checkWin(){
     totalMovesAccum += moves;
     totalSecondsAccum += seconds;
 
-    // stop any playing audio, then play final win.mp3 and show final overlay when last stage
-    stopCurrentPlaying();
+    // stop any playing audio, then play final win and proceed
+    stopAllAudio();
     safePlay(sfx.win);
 
     if (currentStage < TOTAL_STAGES) {
@@ -281,15 +359,14 @@ function showStageWinUIAndAdvance() {
 }
 
 function showFinalScoreUI() {
-  // compute final score
-  const totalMinMoves = TOTAL_STAGES * PAIRS_PER_STAGE; // e.g., 12
+  const totalMinMoves = TOTAL_STAGES * PAIRS_PER_STAGE;
   const totalMoves = Math.max(1, totalMovesAccum);
   let efficiency = totalMinMoves / totalMoves;
   if (efficiency > 1) efficiency = 1;
   if (efficiency < 0) efficiency = 0;
   const score = Math.round(efficiency * 10);
 
-  // create persistent score overlay
+  // persistent score overlay with buttons
   const container = document.createElement('div');
   container.className = 'score-overlay';
   container.id = 'score-overlay';
@@ -309,7 +386,7 @@ function showFinalScoreUI() {
   container.appendChild(card);
   document.body.appendChild(container);
 
-  // animate number 0 -> score
+  // animate score
   const display = document.getElementById('score-number');
   let cur = 0;
   const duration = 900;
@@ -322,30 +399,25 @@ function showFinalScoreUI() {
   }
   requestAnimationFrame(step);
 
-  // spawn confetti (short bursts, but overlay remains)
   launchConfetti(40);
 
-  // buttons behavior
+  // play again
   document.getElementById('play-again-btn').addEventListener('click', ()=> {
-    // stop win audio
-    try { sfx.win && sfx.win.pause(); sfx.win && (sfx.win.currentTime = 0); } catch(e){}
-    // remove score overlay and any confetti elements
+    // stop all audio immediately
+    stopAllAudio();
     try { document.getElementById('score-overlay').remove(); } catch(e){}
     clearConfetti();
-    // reset accumulators and stage and restart
     totalMovesAccum = 0;
     totalSecondsAccum = 0;
     currentStage = 1;
-    // restart camera/game: rebuild stage 1
     startNextStage();
   });
 
+  // back to menu
   document.getElementById('back-menu-btn').addEventListener('click', ()=> {
-    // stop win audio
-    try { sfx.win && sfx.win.pause(); sfx.win && (sfx.win.currentTime = 0); } catch(e){}
-    // stop any playing word audio
+    // stop all audio immediately
+    stopAllAudio();
     stopCurrentPlaying();
-    // stop camera
     try {
       if (camVideo && camVideo.srcObject) {
         const tracks = camVideo.srcObject.getTracks();
@@ -353,26 +425,26 @@ function showFinalScoreUI() {
         camVideo.srcObject = null;
       }
     } catch(e){ console.warn(e); }
-    // remove score overlay and confetti
     try { document.getElementById('score-overlay').remove(); } catch(e){}
     clearConfetti();
-    // remove game overlay (created by ui.js)
     try {
       const gameOverlay = document.getElementById('game-overlay');
       if (gameOverlay) gameOverlay.remove();
     } catch(e){}
-
-    // restore AR UI: show career menu & hide backBtn & restore scan-frame
+    // show career menu and career actions, but hide back & return button
     try {
       const careerMenu = document.getElementById('career-menu');
       if (careerMenu) careerMenu.style.display = 'flex';
+      const careerActions = document.getElementById('career-actions');
+      if (careerActions) careerActions.style.display = 'flex';
       const backBtn = document.getElementById('backBtn');
       if (backBtn) backBtn.style.display = 'none';
+      const returnBtn = document.getElementById('return-btn');
+      if (returnBtn) returnBtn.style.display = 'none';
       const scanFrame = document.getElementById('scan-frame');
       if (scanFrame) scanFrame.style.display = 'flex';
     } catch(e){}
 
-    // cleanup timers
     stopTimer();
   });
 }
@@ -401,7 +473,7 @@ function launchConfetti(count = 24) {
     el.style.borderRadius = (2 + Math.random()*4) + 'px';
     el.style.transform = `rotate(${Math.random()*360}deg)`;
     el.style.animation = `confetti-fall ${fallDuration}ms cubic-bezier(.2,.7,.2,1) ${delay}ms forwards, confetti-sway ${900 + Math.random()*800}ms ease-in-out ${delay}ms infinite`;
-    el.setAttribute('data-confetti', '1');
+    el.setAttribute('data-confetti','1');
     document.body.appendChild(el);
     setTimeout(()=>{ try{ el.remove(); }catch{} }, fallDuration + delay + 4000);
   }
@@ -412,7 +484,6 @@ function clearConfetti(){
 }
 
 function startNextStage() {
-  // reset counters for stage
   moves = 0; matches = 0;
   if (movesEl) movesEl.textContent = `Moves: ${moves}`;
   buildCardObjectsForStage(currentStage);
@@ -434,7 +505,11 @@ async function startGameFlow(initialStage = 1){
   startTimer();
 }
 
+// RESTART: stop audio as requested, then reset board
 btnRestart && btnRestart.addEventListener('click', ()=>{
+  // stop all sounds immediately
+  stopAllAudio();
+
   shuffle(cards);
   renderBoard();
   moves = 0; matches = 0;
@@ -443,9 +518,17 @@ btnRestart && btnRestart.addEventListener('click', ()=>{
   startTimer();
 });
 
+// MUTE/UNMUTE: apply mute to all tracked audio elements and stop sounds when muting
 btnMute && btnMute.addEventListener('click', ()=>{
   isMuted = !isMuted;
-  if (btnMute) btnMute.textContent = isMuted ? '🔇 Muted' : '🔈 Mute';
+  applyMuteToAll(isMuted);
+  if (isMuted) {
+    // if muting, stop any playing audio immediately
+    stopAllAudio();
+    if (btnMute) btnMute.textContent = '🔇 Muted';
+  } else {
+    if (btnMute) btnMute.textContent = '🔈 Mute';
+  }
 });
 
 // camera start helper
@@ -462,10 +545,9 @@ async function startCameraAndGame() {
     return;
   }
 
-  // preload sfx
-  Object.values(sfx).forEach(a => { try{ a && a.load(); } catch{} });
+  // preload sfx (they are already created earlier)
+  Object.values(sfx).forEach(a => { try{ a && a.load(); allAudioElements.add(a);} catch{} });
 
-  // start stage 1
   startGameFlow(1);
 }
 
@@ -481,7 +563,7 @@ if (startButton) {
 
 // cleanup
 window.addEventListener('beforeunload', ()=> {
-  stopCurrentPlaying();
+  stopAllAudio();
   try {
     if (camVideo && camVideo.srcObject) {
       const tracks = camVideo.srcObject.getTracks();
