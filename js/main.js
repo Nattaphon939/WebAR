@@ -21,8 +21,8 @@ async function main() {
   // 2) show start button
   startButton.style.display = 'inline-block';
   startButton.addEventListener('click', async () => {
-    // keep original behavior: request camera + mic (as in file you provided)
-    try { await navigator.mediaDevices.getUserMedia({video:true,audio:true}); } catch(e){ console.warn('permission',e); }
+    // ขอแค่กล้อง (video) เท่านั้น — เอาไมโครโฟนออกตามคำขอ
+    try { await navigator.mediaDevices.getUserMedia({video:true}); } catch(e){ console.warn('permission',e); }
 
     loadingScreen.style.display = 'none';
     container.style.display = 'block';

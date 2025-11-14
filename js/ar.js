@@ -197,11 +197,18 @@ function attachContentToAnchor(gltf, video) {
     };
 
     videoElem.onended = () => {
+      // เมื่อวิดีโอจบ: เก็บ lastCareer และคืนเมนู
       lastCareer = playingCareer;
       clearAnchorContent(false);
       playingCareer = null;
       isPausedByBack = false;
-      if (careerActions()) careerActions().style.display = 'none';
+
+      // แสดงปุ่ม action เฉพาะเมื่อคอนเทนต์ที่เล่นไม่ใช่ Computer
+      if (careerActions()) {
+        if (lastCareer && lastCareer !== 'Computer') careerActions().style.display = 'flex';
+        else careerActions().style.display = 'none';
+      }
+
       if (careerMenu()) careerMenu().style.display = 'flex';
       if (backBtn()) backBtn().style.display = 'none';
     };
