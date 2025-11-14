@@ -1,7 +1,10 @@
-// js/game.js (no external sfx files; uses Web Audio API tones)
-// Memory Match game — camera background + .wav support + synthesized sfx
+// js/game.js
+// Memory Match game — 2 stages (each 6 pairs = 12 cards), stop previous audio when playing new
+// Assumes game_assets/manifest.json exists and contains at least 6 items.
 
 const MANIFEST_PATH = './game_assets/manifest.json';
+const TOTAL_STAGES = 2;
+const PAIRS_PER_STAGE = 6; // 6 pairs = 12 cards per stage
 
 const boardEl = document.getElementById('board');
 const movesEl = document.getElementById('moves');
@@ -15,7 +18,7 @@ const startButton = document.getElementById('start-button');
 const camVideo = document.getElementById('cam-video');
 
 let manifest = [];
-let cards = []; // duplicated + shuffled
+let cards = [];
 let firstCard = null;
 let secondCard = null;
 let lockBoard = false;
@@ -24,90 +27,53 @@ let matches = 0;
 let timer = null;
 let seconds = 0;
 let isMuted = false;
+let currentStage = 1;
+let currentPlayingAudio = null; // for stopping previous audio
 
-// -----------------------------
-// WebAudio synthesized sfx
-// -----------------------------
-const AudioCtx = window.AudioContext || window.webkitAudioContext;
-let audioCtx = null;
-function ensureAudioCtx() {
-  if (!audioCtx) {
-    audioCtx = new AudioCtx();
-    // ensure resume on user gesture
-    if (audioCtx.state === 'suspended') {
-      const resume = () => {
-        audioCtx.resume().catch(()=>{});
-        window.removeEventListener('pointerdown', resume);
-        window.removeEventListener('keydown', resume);
-      };
-      window.addEventListener('pointerdown', resume);
-      window.addEventListener('keydown', resume);
-    }
+// SFX: try multiple extensions (wav then mp3) and fallback to null
+function maybeCreateAudioPaths(basePaths) {
+  // basePaths: array of possible paths
+  for (const p of basePaths) {
+    try {
+      const a = new Audio(p);
+      a.preload = 'auto';
+      a.addEventListener('error', ()=>{ /* ignore */ });
+      return a;
+    } catch(e){}
   }
+  return null;
 }
-
-// helper to play simple tone
-function playTone({freq = 440, dur = 0.1, type = 'sine', gain = 0.12, detune = 0}) {
-  if (isMuted) return;
-  try {
-    ensureAudioCtx();
-    const ctx = audioCtx;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = type;
-    o.frequency.value = freq;
-    o.detune.value = detune;
-    g.gain.value = 0;
-    o.connect(g);
-    g.connect(ctx.destination);
-    const now = ctx.currentTime;
-    g.gain.cancelScheduledValues(now);
-    g.gain.setValueAtTime(0, now);
-    g.gain.linearRampToValueAtTime(gain, now + 0.005);
-    g.gain.exponentialRampToValueAtTime(0.001, now + dur);
-    o.start(now);
-    o.stop(now + dur + 0.02);
-  } catch (e) {
-    // ignore if audio unavailable
-  }
-}
-
-// composite sfx
 const sfx = {
-  flip: ()=> playTone({freq: 1200, dur: 0.06, type: 'sine', gain:0.06}),
-  match: ()=> {
-    // quick chord
-    playTone({freq:880, dur:0.10, type:'sine', gain:0.08});
-    setTimeout(()=> playTone({freq:1320, dur:0.09, type:'sine', gain:0.06}), 45);
-  },
-  wrong: ()=> {
-    // low buzz + short
-    playTone({freq:200, dur:0.14, type:'sawtooth', gain:0.08});
-  },
-  win: ()=> {
-    // arpeggio
-    playTone({freq:800, dur:0.09, type:'sine', gain:0.08});
-    setTimeout(()=>playTone({freq:1000, dur:0.09, type:'sine', gain:0.08}), 90);
-    setTimeout(()=>playTone({freq:1200, dur:0.12, type:'sine', gain:0.10}), 180);
-  }
+  flip: maybeCreateAudioPaths(['game_assets/sfx/flip.wav','game_assets/sfx/flip.mp3']),
+  match: maybeCreateAudioPaths(['game_assets/sfx/match.wav','game_assets/sfx/match.mp3']),
+  wrong: maybeCreateAudioPaths(['game_assets/sfx/wrong.wav','game_assets/sfx/wrong.mp3']),
+  win: maybeCreateAudioPaths(['game_assets/sfx/win.wav','game_assets/sfx/win.mp3'])
 };
 
-function safePlaySfx(fn) {
-  try { if (typeof fn === 'function') fn(); } catch(e) {}
+function safePlay(audio) {
+  if (!audio || isMuted) return;
+  try { audio.currentTime = 0; } catch(e){}
+  const p = audio.play();
+  if (p && p.catch) p.catch(()=>{});
 }
 
-// -----------------------------
-// Helpers for manifest & assets
-// -----------------------------
-function maybeCreateAudio(path) {
-  try {
-    if (!path) return null;
-    const a = new Audio(path);
-    a.preload = 'auto';
-    a.addEventListener('error', ()=>{ /* swallow */ });
-    return a;
-  } catch(e) { return null; }
+function stopCurrentPlaying() {
+  if (currentPlayingAudio) {
+    try { currentPlayingAudio.pause(); currentPlayingAudio.currentTime = 0; } catch(e){}
+    currentPlayingAudio = null;
+  }
 }
+
+function startTimer() {
+  clearInterval(timer);
+  seconds = 0;
+  timerEl.textContent = `Time: 0s`;
+  timer = setInterval(()=>{
+    seconds++;
+    timerEl.textContent = `Time: ${seconds}s`;
+  },1000);
+}
+function stopTimer(){ clearInterval(timer); }
 
 async function loadManifest(){
   try{
@@ -127,27 +93,37 @@ function resolvePath(val, type){
   return val;
 }
 
-function buildCardObjects(){
-  const normalized = manifest.map(item => {
-    const id = item.id || item.name || '';
-    const imageRaw = item.image || item.img || item.icon || '';
-    const wordRaw = item.audioWord || item.wordAudio || item.word || item.audio_word;
-    const meaningRaw = item.audioMeaning || item.meaningAudio || item.meaning || item.audio_meaning;
-    return {
-      id,
-      image: resolvePath(imageRaw, 'image'),
-      wordAudio: resolvePath(wordRaw, 'audio'),
-      meaningAudio: resolvePath(meaningRaw, 'audio')
-    };
-  });
+// pick N unique items from manifest (shuffle then take first N)
+function pickNItems(n) {
+  const copy = (manifest||[]).slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random()*(i+1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, Math.min(n, copy.length));
+}
 
-  const valid = normalized.filter(n => n.id && n.image);
+function buildCardObjectsForStage(stage) {
+  // choose PAIRS_PER_STAGE different items
+  const chosen = pickNItems(PAIRS_PER_STAGE);
+  // normalize and create pairs
   cards = [];
-  valid.forEach(it => {
-    const a = {...it, instanceId: it.id + '-a'};
-    const b = {...it, instanceId: it.id + '-b'};
+  chosen.forEach(it => {
+    const id = it.id || it.name || '';
+    const imgRaw = it.image || it.img || it.icon || '';
+    const wordRaw = it.audioWord || it.wordAudio || it.word || it.audio_word;
+    const meaningRaw = it.audioMeaning || it.meaningAudio || it.meaning || it.audio_meaning;
+    const card = {
+      id,
+      image: resolvePath(imgRaw,'image'),
+      wordAudio: resolvePath(wordRaw,'audio'),
+      meaningAudio: resolvePath(meaningRaw,'audio')
+    };
+    const a = {...card, instanceId: id + '-a-' + Math.random().toString(36).slice(2,7)};
+    const b = {...card, instanceId: id + '-b-' + Math.random().toString(36).slice(2,7)};
     cards.push(a,b);
   });
+  // ensure even number
   if (cards.length % 2 !== 0) cards.pop();
   shuffle(cards);
 }
@@ -159,9 +135,6 @@ function shuffle(arr){
   }
 }
 
-// -----------------------------
-// DOM / game logic
-// -----------------------------
 function createCardElement(cardObj){
   const el = document.createElement('div');
   el.className = 'card';
@@ -186,9 +159,9 @@ function createCardElement(cardObj){
   inner.appendChild(front);
   el.appendChild(inner);
 
-  // preload audio for card (only word/meaning; these are your provided .wav files)
-  el._wordAudio = cardObj.wordAudio ? maybeCreateAudio(cardObj.wordAudio) : null;
-  el._meaningAudio = cardObj.meaningAudio ? maybeCreateAudio(cardObj.meaningAudio) : null;
+  // prepare audio objects but DO NOT autoplay
+  el._wordAudio = cardObj.wordAudio ? maybeCreateAudioPaths([cardObj.wordAudio, cardObj.wordAudio.replace('.wav','.mp3')]) : null;
+  el._meaningAudio = cardObj.meaningAudio ? maybeCreateAudioPaths([cardObj.meaningAudio, cardObj.meaningAudio.replace('.wav','.mp3')]) : null;
 
   el.addEventListener('click', ()=> onCardClick(el, cardObj));
   return el;
@@ -209,9 +182,21 @@ function onCardClick(el, cardObj){
   if (el === firstCard) return;
   if (el.classList.contains('matched')) return;
 
+  // flip visual
   el.classList.add('flipped');
-  safePlaySfx(sfx.flip);
-  if (el._wordAudio) { try { el._wordAudio.currentTime = 0; el._wordAudio.play().catch(()=>{}); } catch(e){} }
+
+  // stop any playing word/meaning audio first
+  stopCurrentPlaying();
+
+  // play flip sfx then word audio
+  safePlay(sfx.flip);
+
+  if (el._wordAudio) {
+    currentPlayingAudio = el._wordAudio;
+    try { currentPlayingAudio.currentTime = 0; } catch(e){}
+    const p = currentPlayingAudio.play();
+    if (p && p.catch) p.catch(()=>{});
+  }
 
   if (!firstCard){
     firstCard = el;
@@ -231,7 +216,7 @@ function onCardClick(el, cardObj){
     setTimeout(()=>{
       firstCard.classList.add('wrong');
       secondCard.classList.add('wrong');
-      safePlaySfx(sfx.wrong);
+      safePlay(sfx.wrong);
       setTimeout(()=>{
         firstCard.classList.remove('flipped','wrong');
         secondCard.classList.remove('flipped','wrong');
@@ -242,27 +227,25 @@ function onCardClick(el, cardObj){
 }
 
 function onMatch(a,b){
-  // เล่นเสียง match (synthesized) และทำให้การ์ดค้างเปิดตลอด
-  safePlaySfx(sfx.match);
+  safePlay(sfx.match);
+  // stop any playing word audio before playing meaning
+  stopCurrentPlaying();
 
-  // เพิ่มคลาส matched และ flipped จะทำให้การ์ดค้างเปิด (CSS ใช้ .card.flipped)
-  a.classList.add('matched', 'flipped');
-  b.classList.add('matched', 'flipped');
+  a.classList.add('matched'); b.classList.add('matched');
+  a.style.pointerEvents = 'none'; b.style.pointerEvents = 'none';
 
-  // ปิดการคลิกบนการ์ดที่จับคู่แล้ว
-  a.style.pointerEvents = 'none';
-  b.style.pointerEvents = 'none';
-
-  // เล่นเสียงความหมาย (ถ้ามีไฟล์ meaning)
+  // play meaning audio (if exists) and set as currentPlayingAudio
   if (a._meaningAudio) {
-    try { a._meaningAudio.currentTime = 0; a._meaningAudio.play().catch(()=>{}); } catch(e){}
+    currentPlayingAudio = a._meaningAudio;
+    try { currentPlayingAudio.currentTime = 0; } catch(e){}
+    const p = currentPlayingAudio.play();
+    if (p && p.catch) p.catch(()=>{});
   }
 
   matches++;
   resetSelection();
   checkWin();
 }
-
 
 function resetSelection(){
   firstCard = null;
@@ -273,29 +256,49 @@ function resetSelection(){
 function checkWin(){
   if (matches * 2 === cards.length){
     stopTimer();
-    safePlaySfx(sfx.win);
-    if (msgEl) msgEl.innerHTML = `<div class="win-overlay"><div class="win-card">ชนะ! Moves: ${moves} • Time: ${seconds}s</div></div>`;
+    safePlay(sfx.win);
+    // show win overlay with stage info
+    showStageWinUI(currentStage);
   }
 }
 
-// -----------------------------
-// timer / controls
-// -----------------------------
-function startTimer() {
-  clearInterval(timer);
-  seconds = 0;
-  if (timerEl) timerEl.textContent = `Time: 0s`;
-  timer = setInterval(()=>{
-    seconds++;
-    if (timerEl) timerEl.textContent = `Time: ${seconds}s`;
-  },1000);
-}
-function stopTimer(){ clearInterval(timer); }
+function showStageWinUI(stage) {
+  // small overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'win-overlay';
+  overlay.innerHTML = `<div class="win-card">ผ่านด่าน ${stage} • Moves: ${moves} • Time: ${seconds}s</div>`;
+  document.body.appendChild(overlay);
 
-async function startGameFlow(){
+  // auto advance after short delay if not last stage
+  const delay = 1200;
+  if (stage < TOTAL_STAGES) {
+    setTimeout(()=>{
+      overlay.remove();
+      currentStage++;
+      startNextStage();
+    }, delay);
+  } else {
+    // final stage: leave overlay for a bit
+    setTimeout(()=>{ try{ overlay.remove(); }catch{} }, 2500);
+  }
+}
+
+function startNextStage() {
+  // reset counters and select new cards
+  moves = 0; matches = 0;
+  if (movesEl) movesEl.textContent = `Moves: ${moves}`;
+  // choose new set for this stage
+  buildCardObjectsForStage(currentStage);
+  renderBoard();
+  startTimer();
+}
+
+async function startGameFlow(initialStage = 1){
   await loadManifest();
   if (!manifest || manifest.length === 0) return;
-  buildCardObjects();
+  currentStage = initialStage;
+  // build and render stage
+  buildCardObjectsForStage(currentStage);
   renderBoard();
   moves = 0; matches = 0;
   if (movesEl) movesEl.textContent = `Moves: 0`;
@@ -304,6 +307,7 @@ async function startGameFlow(){
 }
 
 btnRestart && btnRestart.addEventListener('click', ()=>{
+  // restart current stage
   shuffle(cards);
   renderBoard();
   moves = 0; matches = 0;
@@ -317,9 +321,7 @@ btnMute && btnMute.addEventListener('click', ()=>{
   if (btnMute) btnMute.textContent = isMuted ? '🔇 Muted' : '🔈 Mute';
 });
 
-// -----------------------------
-// camera start logic
-// -----------------------------
+// camera start helper
 async function startCameraAndGame() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }});
@@ -333,20 +335,32 @@ async function startCameraAndGame() {
     return;
   }
 
-  // ensure AudioContext created after gesture
-  ensureAudioCtx();
+  // preload sfx once user has interacted
+  Object.values(sfx).forEach(a => { try{ a && a.load(); } catch{} });
 
-  // start the game logic
-  startGameFlow();
+  // start the game logic at stage 1
+  startGameFlow(1);
 }
 
-// Attach start handler if button exists, otherwise auto-start (overlay click was initial gesture)
+// Attach start listener robustly
 if (startButton) {
   startButton.addEventListener('click', async () => {
     await startCameraAndGame();
     if (startOverlay) startOverlay.style.display = 'none';
   });
 } else {
-  // if no explicit button (e.g., overlay injected differently), auto start shortly
-  setTimeout(()=>{ startCameraAndGame(); if (startOverlay) startOverlay.style.display = 'none'; }, 40);
+  // If start-button not present, auto-start (e.g., injected overlay already had a click)
+  setTimeout(()=>{ startCameraAndGame(); if (startOverlay) startOverlay.style.display = 'none'; }, 30);
 }
+
+// ensure when overlay closed externally we stop audio/camera
+window.addEventListener('beforeunload', ()=> {
+  // stop current audio and camera tracks
+  stopCurrentPlaying();
+  try {
+    if (camVideo && camVideo.srcObject) {
+      const tracks = camVideo.srcObject.getTracks();
+      tracks.forEach(t=>t.stop());
+    }
+  } catch(e){}
+});
