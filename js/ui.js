@@ -2,7 +2,6 @@
 import * as AR from './ar.js';
 
 export function initUI() {
-  // career buttons
   document.querySelectorAll('.career-btn').forEach(btn=>{
     btn.addEventListener('click', ()=> {
       const c = btn.dataset.career;
@@ -20,13 +19,14 @@ export function initUI() {
     AR.returnToLast();
   });
 
-  // action buttons (open game as inline overlay)
   const gameBtn = document.getElementById('game-btn');
   const surveyBtn = document.getElementById('survey-btn');
   const contactBtn = document.getElementById('contact-btn');
 
   if (gameBtn) gameBtn.addEventListener('click', async ()=> {
-    try { AR.pauseAndShowMenu(); } catch(e){}
+    // Pause AR content & disable auto-play to prevent any audio/model start while in-game
+    try { AR.pauseAndShowMenu(); } catch(e) {}
+    try { AR.setAutoPlayEnabled(false); } catch(e){}
 
     const careerMenu = document.getElementById('career-menu');
     if (careerMenu) careerMenu.style.display = 'none';
@@ -52,7 +52,6 @@ export function initUI() {
       const res = await fetch('game.html');
       if (!res.ok) throw new Error('game.html not found');
       const htmlText = await res.text();
-
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlText, 'text/html');
 
@@ -98,7 +97,7 @@ export function initUI() {
 
       const s = document.createElement('script');
       s.type = 'module';
-      s.src = 'js/game.js?ts=' + Date.now(); // cache-bust
+      s.src = 'js/game.js?ts=' + Date.now();
       s.setAttribute('data-game-module','1');
       document.body.appendChild(s);
 
@@ -123,10 +122,13 @@ export function initUI() {
         if (scoreOv) try { scoreOv.remove(); } catch(e){}
         document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
 
+        // re-enable AR autoplay (so markers again can start content) and show UI
+        try { AR.setAutoPlayEnabled(true); } catch(e){}
         if (careerMenu) careerMenu.style.display = 'flex';
         const careerActions = document.getElementById('career-actions');
         if (careerActions) careerActions.style.display = 'flex';
 
+        // hide back & return buttons
         if (backBtn) backBtn.style.display = 'none';
         const returnBtn2 = document.getElementById('return-btn');
         if (returnBtn2) returnBtn2.style.display = 'none';
@@ -141,6 +143,8 @@ export function initUI() {
       if (careerMenu) careerMenu.style.display = 'flex';
       const careerActions = document.getElementById('career-actions');
       if (careerActions) careerActions.style.display = 'flex';
+      // ensure autoplay re-enabled on error
+      try { AR.setAutoPlayEnabled(true); } catch(e){}
     }
   });
 

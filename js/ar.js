@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// same config as original
 const JOB_ROOT = './Job';
 const careers = ['Computer','AI','Cloud','Data_Center','Network'];
 const candidates = {
@@ -14,10 +13,8 @@ const candidates = {
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
-// assets storage
 const assets = {};
 
-// DOM refs used by ar.js (same ids as index.html)
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
 const careerActions = () => document.getElementById('career-actions');
@@ -34,6 +31,12 @@ let playingCareer = null;
 let lastCareer = null;
 let isPausedByBack = false;
 
+// NEW: control whether AR should auto-play content when target found
+let autoPlayEnabled = true;
+export function setAutoPlayEnabled(flag) {
+  autoPlayEnabled = !!flag;
+}
+
 const tmpObj = new THREE.Object3D();
 const tmpQuat = new THREE.Quaternion();
 const parentWorldQuat = new THREE.Quaternion();
@@ -43,7 +46,6 @@ const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
 
-// helpers (same logic)
 async function findAndFetch(career, list) {
   for (const name of list) {
     const url = `${JOB_ROOT}/${career}/${name}`;
@@ -57,7 +59,6 @@ async function findAndFetch(career, list) {
   return null;
 }
 
-// preloadAll (exported)
 export async function preloadAll(onProgress = ()=>{}) {
   let total = careers.length * 2;
   let done = 0;
@@ -125,12 +126,12 @@ function clearAnchorContent(keep=false) {
   }
 
   if (mixer) {
-    try { mixer.stopAllAction(); } catch(e){}
+    try { mixer.stopAllAction(); } catch(e){ }
     mixer = null;
   }
   if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
   if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
-  if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
+  if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; videoElem = null; }catch{} videoElem = null; }
 }
 
 function attachContentToAnchor(gltf, video) {
@@ -197,27 +198,18 @@ function attachContentToAnchor(gltf, video) {
     };
 
     videoElem.onended = () => {
-      // เมื่อวิดีโอจบ: เก็บ lastCareer และคืนเมนู
       lastCareer = playingCareer;
       clearAnchorContent(false);
       playingCareer = null;
       isPausedByBack = false;
-
-      // แสดงปุ่ม action เฉพาะเมื่อคอนเทนต์ที่เล่นไม่ใช่ Computer
-      if (careerActions()) {
-        if (lastCareer && lastCareer !== 'Computer') careerActions().style.display = 'flex';
-        else careerActions().style.display = 'none';
-      }
-
+      if (careerActions()) careerActions().style.display = 'none';
       if (careerMenu()) careerMenu().style.display = 'flex';
       if (backBtn()) backBtn().style.display = 'none';
     };
   }
 }
 
-// init/start MindAR and attach initial Computer content
 export async function initAndStart(containerElement) {
-  // create mindarThree instance
   mindarThree = new MindARThree({
     container: containerElement,
     imageTargetSrc: `${JOB_ROOT}/Computer/marker.mind`,
@@ -230,7 +222,6 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
-  // attach initial Computer
   const comp = assets['Computer'] || {};
   const g = await loadGLTF(comp.modelBlobUrl);
   const v = makeVideoElem(comp.videoBlobUrl);
@@ -241,7 +232,14 @@ export async function initAndStart(containerElement) {
 
   // events
   anchor.onTargetFound = () => {
+    // hide scan overlay always
     if (scanFrame()) scanFrame().style.display = 'none';
+
+    // If autoPlay disabled (e.g., game overlay open), do not auto-play content or resume mixer.
+    if (!autoPlayEnabled) {
+      return;
+    }
+
     if (videoElem && videoElem.paused) {
       try { videoElem.currentTime = 0; } catch(e){}
       const p = videoElem.play();
@@ -286,7 +284,7 @@ export async function initAndStart(containerElement) {
   });
 }
 
-// exported UI actions (same behavior as original)
+// exported UI actions
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (career !== 'Computer') {
@@ -295,6 +293,9 @@ export async function playCareer(career) {
     if (careerActions()) careerActions().style.display = 'none';
   }
   if (careerMenu()) careerMenu().style.display = 'none';
+
+  // re-enable auto-play when user explicitly requests a career content
+  setAutoPlayEnabled(true);
 
   if (playingCareer === career && isPausedByBack && videoElem) {
     isPausedByBack = false;
@@ -337,6 +338,8 @@ export function pauseAndShowMenu() {
     try { mixer.timeScale = 0; } catch(e){ console.warn(e); }
   }
   isPausedByBack = true;
+  // also disable auto-play so external overlays (like game) don't trigger audio
+  setAutoPlayEnabled(false);
   if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
@@ -344,6 +347,9 @@ export function pauseAndShowMenu() {
 
 export function returnToLast() {
   if (!lastCareer) return;
+  // re-enable autoplay when user intentionally returns
+  setAutoPlayEnabled(true);
+
   if (playingCareer === lastCareer && isPausedByBack && videoElem) {
     if (careerMenu()) careerMenu().style.display = 'flex';
     if (backBtn()) backBtn().style.display = 'inline-block';
@@ -360,10 +366,11 @@ export function removeCurrentAndShowMenu() {
   clearAnchorContent(false);
   playingCareer = null;
   isPausedByBack = false;
+  // when removing content, re-enable autoplay to allow normal AR behaviour
+  setAutoPlayEnabled(true);
   if (careerActions()) careerActions().style.display = 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
 }
 
-// expose assets for external usage (optional)
 export function getAssets() { return assets; }
