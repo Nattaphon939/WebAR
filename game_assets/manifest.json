@@ -1,0 +1,12 @@
+[
+  { "id": "Computer", "image": "Computer.png", "audioWord": "Computer1.wav", "audioMeaning": "Computer2.wav" },
+  { "id": "Database", "image": "Database.png", "audioWord": "Database1.wav", "audioMeaning": "Database2.wav" },
+  { "id": "Code", "image": "Code.png", "audioWord": "Code1.wav", "audioMeaning": "Code2.wav" },
+  { "id": "Network", "image": "Network.png", "audioWord": "Network1.wav", "audioMeaning": "Network2.wav" },
+  { "id": "CPU", "image": "CPU.png", "audioWord": "CPU1.wav", "audioMeaning": "CPU2.wav" },
+  { "id": "Mobile Application", "image": "Mobile Application.png", "audioWord": "Mobile Application1.wav", "audioMeaning": "Mobile Application2.wav" },
+  { "id": "programmer", "image": "programmer.png", "audioWord": "programmer1.wav", "audioMeaning": "programmer2.wav" },
+  { "id": "Server", "image": "Server.png", "audioWord": "Server1.wav", "audioMeaning": "Server2.wav" },
+  { "id": "Hacker", "image": "Hacker.png", "audioWord": "Hacker1.wav", "audioMeaning": "Hacker2.wav" },
+  { "id": "Cybersecurity", "image": "Cybersecurity.png", "audioWord": "Cybersecurity1.wav", "audioMeaning": "Cybersecurity2.wav" }
+]
