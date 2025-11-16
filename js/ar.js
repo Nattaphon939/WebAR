@@ -31,10 +31,30 @@ let playingCareer = null;
 let lastCareer = null;
 let isPausedByBack = false;
 
-// NEW: control whether AR should auto-play content when target found
+// control whether AR should auto-play content when target found (false when game/menu overlay open)
 let autoPlayEnabled = true;
-export function setAutoPlayEnabled(flag) {
-  autoPlayEnabled = !!flag;
+export function setAutoPlayEnabled(flag) { autoPlayEnabled = !!flag; }
+
+// flags for tracking/play state
+let isAnchorTracked = false;
+let waitingForMarkerPlay = false;
+let pausedByTrackingLoss = false;
+
+// control to hide scan visuals when menu up
+let noScanMode = false;
+export function setNoScan(flag) {
+  noScanMode = !!flag;
+  const sf = scanFrame();
+  if (!sf) return;
+  if (noScanMode) {
+    sf.style.display = 'none';
+    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    document.body.classList.add('no-scan');
+  } else {
+    document.body.classList.remove('no-scan');
+    sf.style.display = 'flex';
+    Array.from(sf.querySelectorAll('*')).forEach(n=> { n.style.display = ''; });
+  }
 }
 
 const tmpObj = new THREE.Object3D();
@@ -46,6 +66,82 @@ const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
 
+// helper: fade out scan-frame, then call callback
+function hideScanFrameThen(callback) {
+  const sf = scanFrame();
+  if (!sf) {
+    if (callback) callback();
+    return;
+  }
+
+  // if noScanMode or career menu visible -> ensure hidden, then callback
+  if (noScanMode) {
+    sf.style.display = 'none';
+    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    if (callback) callback();
+    return;
+  }
+
+  const cm = careerMenu();
+  try {
+    const cmStyle = cm ? window.getComputedStyle(cm) : null;
+    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '0') {
+      sf.style.display = 'none';
+      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+      if (callback) callback();
+      return;
+    }
+  } catch(e){}
+
+  const curDisplay = window.getComputedStyle(sf).display;
+  if (curDisplay === 'none' || sf.style.display === 'none') {
+    if (callback) callback();
+    return;
+  }
+
+  sf.style.transition = 'opacity 260ms ease';
+  sf.style.opacity = '1';
+  // trigger reflow
+  sf.offsetHeight;
+  sf.style.opacity = '0';
+
+  const tid = setTimeout(() => {
+    try {
+      sf.style.display = 'none';
+      sf.style.transition = '';
+      sf.style.opacity = '1';
+      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    } catch (e) {}
+    clearTimeout(tid);
+    if (callback) callback();
+  }, 300);
+}
+
+// helper: show scan frame (immediate) but keep it hidden when menu is visible or noScanMode
+function showScanFrame() {
+  const sf = scanFrame();
+  if (!sf) return;
+  if (noScanMode) {
+    sf.style.display = 'none';
+    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    return;
+  }
+  const cm = careerMenu();
+  try {
+    const cmStyle = cm ? window.getComputedStyle(cm) : null;
+    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '1') {
+      sf.style.display = 'none';
+      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+      return;
+    }
+  } catch(e){}
+  sf.style.transition = '';
+  sf.style.opacity = '1';
+  sf.style.display = 'flex';
+  Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = '');
+}
+
+// helpers (fetch assets)
 async function findAndFetch(career, list) {
   for (const name of list) {
     const url = `${JOB_ROOT}/${career}/${name}`;
@@ -62,11 +158,7 @@ async function findAndFetch(career, list) {
 export async function preloadAll(onProgress = ()=>{}) {
   let total = careers.length * 2;
   let done = 0;
-  function tick() {
-    done++;
-    const pct = Math.round((done / total) * 100);
-    onProgress(pct);
-  }
+  function tick() { done++; const pct = Math.round((done / total) * 100); onProgress(pct); }
 
   for (const career of careers) {
     assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
@@ -115,23 +207,20 @@ function makeVideoElem(blobUrl) {
 
 function clearAnchorContent(keep=false) {
   if (keep) {
-    if (videoElem) {
-      try { videoElem.pause(); } catch(e){}
-    }
-    if (mixer) {
-      try { mixer.timeScale = 0; } catch(e){}
-    }
+    if (videoElem) { try { videoElem.pause(); } catch(e){} }
+    if (mixer) { try { mixer.timeScale = 0; } catch(e){} }
     isPausedByBack = true;
+    waitingForMarkerPlay = false;
+    pausedByTrackingLoss = false;
     return;
   }
 
-  if (mixer) {
-    try { mixer.stopAllAction(); } catch(e){ }
-    mixer = null;
-  }
+  if (mixer) { try { mixer.stopAllAction(); } catch(e){} mixer = null; }
   if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
   if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
-  if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; videoElem = null; }catch{} videoElem = null; }
+  if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
 }
 
 function attachContentToAnchor(gltf, video) {
@@ -144,33 +233,28 @@ function attachContentToAnchor(gltf, video) {
     gltfModel = gltf.scene;
     gltfModel.scale.set(0.4,0.4,0.4);
     gltfModel.position.set(-0.25, -0.45, 0.05);
+    gltfModel.visible = false;
     anchor.group.add(gltfModel);
-    try {
-      gltfModel.rotation.set(0,0,0);
-      gltfModel.quaternion.set(0,0,0,1);
-      gltfModel.updateMatrixWorld(true);
-    } catch(e){}
+    try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
     if (gltf.animations && gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(gltfModel);
-      gltf.animations.forEach(c => mixer.clipAction(c).play());
-      mixer.timeScale = 1;
+      gltf.animations.forEach(c => { const action = mixer.clipAction(c); action.play(); });
+      mixer.timeScale = 0;
     }
   }
 
   if (video) {
     videoElem = video;
+    try { videoElem.pause(); } catch(e){}
     const texture = new THREE.VideoTexture(videoElem);
     texture.colorSpace = THREE.SRGBColorSpace;
     const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
     const mat = new THREE.MeshBasicMaterial({ map: texture });
     videoMesh = new THREE.Mesh(plane, mat);
     videoMesh.position.set(0, -0.05, 0);
+    videoMesh.visible = false;
     anchor.group.add(videoMesh);
-    try {
-      videoMesh.rotation.set(0,0,0);
-      videoMesh.quaternion.set(0,0,0,1);
-      videoMesh.updateMatrixWorld(true);
-    } catch(e){}
+    try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
 
     videoElem.onloadedmetadata = () => {
       try {
@@ -202,9 +286,12 @@ function attachContentToAnchor(gltf, video) {
       clearAnchorContent(false);
       playingCareer = null;
       isPausedByBack = false;
-      if (careerActions()) careerActions().style.display = 'none';
+      if (lastCareer && ['AI','Cloud','Data_Center','Network'].includes(lastCareer)) {
+        if (careerActions()) careerActions().style.display = 'flex';
+      }
       if (careerMenu()) careerMenu().style.display = 'flex';
       if (backBtn()) backBtn().style.display = 'none';
+      if (scanFrame()) scanFrame().style.display = 'none';
     };
   }
 }
@@ -222,6 +309,7 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
+  // initial attach (hidden + paused)
   const comp = assets['Computer'] || {};
   const g = await loadGLTF(comp.modelBlobUrl);
   const v = makeVideoElem(comp.videoBlobUrl);
@@ -230,29 +318,60 @@ export async function initAndStart(containerElement) {
   lastCareer = 'Computer';
   if (careerActions()) careerActions().style.display = 'none';
 
-  // events
   anchor.onTargetFound = () => {
-    // hide scan overlay always
-    if (scanFrame()) scanFrame().style.display = 'none';
+    isAnchorTracked = true;
 
-    // If autoPlay disabled (e.g., game overlay open), do not auto-play content or resume mixer.
-    if (!autoPlayEnabled) {
-      return;
-    }
+    // hide scan-frame first, then reveal and possibly play (with 1s delay before play)
+    hideScanFrameThen(() => {
+      // reveal model & video meshes first (visible true)
+      try { if (gltfModel) gltfModel.visible = true; } catch(e){}
+      try { if (videoMesh) videoMesh.visible = true; } catch(e){}
 
-    if (videoElem && videoElem.paused) {
-      try { videoElem.currentTime = 0; } catch(e){}
-      const p = videoElem.play();
-      if (p && p.catch) p.catch(e=>console.warn('play prevented',e));
-    }
-    if (mixer && isPausedByBack) {
-      try { mixer.timeScale = 1; } catch(e){}
-    }
-    isPausedByBack = false;
+      // if autoplay disabled (menu/game open) do nothing further
+      if (!autoPlayEnabled) {
+        return;
+      }
+
+      // resume after tracking-loss if needed
+      if (pausedByTrackingLoss) {
+        if (mixer) try { mixer.timeScale = 1; } catch(e){}
+        if (videoElem && videoElem.paused) try { videoElem.play(); } catch(e){}
+        pausedByTrackingLoss = false;
+        waitingForMarkerPlay = false;
+        return;
+      }
+
+      // if user previously clicked career and was waiting for marker OR default auto-play:
+      // for all careers: wait 1s after reveal, then start animations/video
+      const startNow = () => {
+        if (mixer) try { mixer.timeScale = 1; } catch(e){}
+        if (videoElem) {
+          try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
+        }
+      };
+
+      if (waitingForMarkerPlay || (videoElem && videoElem.paused && playingCareer)) {
+        setTimeout(startNow, 1000);
+        waitingForMarkerPlay = false;
+        return;
+      }
+    });
   };
 
   anchor.onTargetLost = () => {
+    isAnchorTracked = false;
+    // keep scan frame hidden
     if (scanFrame()) scanFrame().style.display = 'none';
+
+    if (!autoPlayEnabled) return;
+
+    // pause playing and mark pausedByTrackingLoss
+    if (videoElem && !videoElem.paused) {
+      try { videoElem.pause(); pausedByTrackingLoss = true; } catch(e){}
+    }
+    if (mixer) {
+      try { mixer.timeScale = 0; } catch(e){}
+    }
   };
 
   await mindarThree.start();
@@ -287,28 +406,25 @@ export async function initAndStart(containerElement) {
 // exported UI actions
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
+  if (careerMenu()) careerMenu().style.display = 'none';
   if (career !== 'Computer') {
     if (careerActions()) careerActions().style.display = 'flex';
   } else {
     if (careerActions()) careerActions().style.display = 'none';
   }
-  if (careerMenu()) careerMenu().style.display = 'none';
 
-  // re-enable auto-play when user explicitly requests a career content
   setAutoPlayEnabled(true);
-
-  if (playingCareer === career && isPausedByBack && videoElem) {
-    isPausedByBack = false;
-    try { videoElem.play(); } catch(e){ console.warn(e); }
-    if (mixer) try { mixer.timeScale = 1; } catch(e){}
-    return;
-  }
 
   if (playingCareer && playingCareer !== career) {
     clearAnchorContent(false);
     playingCareer = null;
     isPausedByBack = false;
+    waitingForMarkerPlay = false;
+    pausedByTrackingLoss = false;
   }
+
+  // IMPORTANT: hide scan visuals immediately when user requests play (we will reveal & delay onTargetFound)
+  setNoScan(true);
 
   const a = assets[career] || {};
   const gltf = await loadGLTF(a.modelBlobUrl);
@@ -320,41 +436,44 @@ export async function playCareer(career) {
   lastCareer = career;
   isPausedByBack = false;
 
-  try {
-    if (videoElem) {
-      try{ videoElem.currentTime = 0; }catch{}
-      const p = videoElem.play();
-      if (p && p.catch) p.catch(e=>console.warn('play blocked',e));
-    }
-    if (mixer) try { mixer.timeScale = 1; } catch(e){}
-  } catch(e){}
+  // If anchor currently tracked & autoplay enabled -> reveal then start after 1s
+  if (isAnchorTracked && autoPlayEnabled) {
+    try { if (gltfModel) gltfModel.visible = true; } catch(e){}
+    try { if (videoMesh) videoMesh.visible = true; } catch(e){}
+    setTimeout(()=> {
+      if (mixer) try { mixer.timeScale = 1; } catch(e){}
+      if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
+    }, 1000);
+    waitingForMarkerPlay = false;
+  } else {
+    waitingForMarkerPlay = true;
+  }
 }
 
 export function pauseAndShowMenu() {
-  if (videoElem) {
-    try { videoElem.pause(); } catch(e){ console.warn(e); }
-  }
-  if (mixer) {
-    try { mixer.timeScale = 0; } catch(e){ console.warn(e); }
-  }
+  if (videoElem) { try { videoElem.pause(); } catch(e){ console.warn(e); } }
+  if (mixer) { try { mixer.timeScale = 0; } catch(e){ console.warn(e); } }
   isPausedByBack = true;
-  // also disable auto-play so external overlays (like game) don't trigger audio
   setAutoPlayEnabled(false);
   if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
+
+  // when showing menu, hide scan visuals
+  setNoScan(true);
+
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
 }
 
 export function returnToLast() {
   if (!lastCareer) return;
-  // re-enable autoplay when user intentionally returns
   setAutoPlayEnabled(true);
-
   if (playingCareer === lastCareer && isPausedByBack && videoElem) {
     if (careerMenu()) careerMenu().style.display = 'flex';
     if (backBtn()) backBtn().style.display = 'inline-block';
     isPausedByBack = false;
-    try { videoElem.play(); } catch(e){ console.warn(e); }
+    try { if (gltfModel) gltfModel.visible = true; if (videoMesh) videoMesh.visible = true; videoElem.play(); } catch(e){ console.warn(e); }
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
     if (lastCareer !== 'Computer' && careerActions()) careerActions().style.display = 'flex';
     return;
@@ -366,11 +485,29 @@ export function removeCurrentAndShowMenu() {
   clearAnchorContent(false);
   playingCareer = null;
   isPausedByBack = false;
-  // when removing content, re-enable autoplay to allow normal AR behaviour
   setAutoPlayEnabled(true);
   if (careerActions()) careerActions().style.display = 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
+
+  // ensure scan visuals hidden when menu shown
+  setNoScan(true);
+
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
+}
+
+// reset to idle (remove content, disable autoplay)
+export function resetToIdle() {
+  try { clearAnchorContent(false); } catch(e){ console.warn('resetToIdle clear err', e); }
+  playingCareer = null;
+  lastCareer = null;
+  isPausedByBack = false;
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
+  setAutoPlayEnabled(false);
+  // hide scan visuals when we go idle (menu or overlay)
+  setNoScan(true);
 }
 
 export function getAssets() { return assets; }

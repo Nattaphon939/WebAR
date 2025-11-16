@@ -7,14 +7,24 @@ html,body{height:100%;margin:0;background:#000;color:#fff;overflow:hidden;font-f
 .bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#0077ff);transition:width .25s;}
 #loading-text{color:#cbd5e1;margin-bottom:14px}
 #startButton{display:none;padding:12px 22px;border-radius:10px;border:none;background:var(--accent);color:#000;font-weight:600;cursor:pointer}
-/* scan frame (initial) */
+
+/* scan frame (initial) - neon outer removed */
 #scan-frame{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:20}
-.frame{width:68vmin;height:68vmin;border-radius:12px;border:3px solid rgba(0,255,255,.14);box-shadow:0 0 30px rgba(0,255,255,.06);display:flex;align-items:center;justify-content:center}
-.corner{position:absolute;width:64px;height:64px;border:3px solid var(--accent);box-shadow:0 0 8px var(--accent);opacity:.9}
-.corner.tl{top:calc(50% - 34vmin);left:calc(50% - 34vmin);border-right:none;border-bottom:none}
-.corner.tr{top:calc(50% - 34vmin);right:calc(50% - 34vmin);border-left:none;border-bottom:none}
-.corner.bl{bottom:calc(50% - 34vmin);left:calc(50% - 34vmin);border-right:none;border-top:none}
-.corner.br{bottom:calc(50% - 34vmin);right:calc(50% - 34vmin);border-left:none;border-top:none}
+/* Remove neon border: keep a subtle rounded holder without bright neon */
+.frame{width:68vmin;height:68vmin;border-radius:12px;border:2px solid rgba(255,255,255,0.03);box-shadow:0 0 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center}
+/* hide decorative neon corners */
+.corner{display:none}
+
+/* FORCE-HIDE scan visuals when body.no-scan present (important rules so nothing leaks through) */
+body.no-scan #scan-frame,
+body.no-scan #scan-frame *, 
+body.no-scan #scan-frame::before,
+body.no-scan #scan-frame::after {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 
 /* career menu: vertical, centered nice card */
 #career-menu{

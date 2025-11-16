@@ -5,6 +5,8 @@ export function initUI() {
   document.querySelectorAll('.career-btn').forEach(btn=>{
     btn.addEventListener('click', ()=> {
       const c = btn.dataset.career;
+      // hide scan visuals immediately when user explicitly starts a career
+      AR.setNoScan(true);
       AR.playCareer(c);
     });
   });
@@ -12,6 +14,8 @@ export function initUI() {
   const backBtn = document.getElementById('backBtn');
   if (backBtn) backBtn.addEventListener('click', ()=> {
     AR.pauseAndShowMenu();
+    // show that menu is visible -> hide scan visuals
+    AR.setNoScan(true);
   });
 
   const returnBtn = document.getElementById('return-btn');
@@ -24,9 +28,9 @@ export function initUI() {
   const contactBtn = document.getElementById('contact-btn');
 
   if (gameBtn) gameBtn.addEventListener('click', async ()=> {
-    // Pause AR content & disable auto-play to prevent any audio/model start while in-game
-    try { AR.pauseAndShowMenu(); } catch(e) {}
-    try { AR.setAutoPlayEnabled(false); } catch(e){}
+    try { AR.resetToIdle(); } catch(e){ console.warn('resetToIdle err', e); }
+
+    AR.setNoScan(true);
 
     const careerMenu = document.getElementById('career-menu');
     if (careerMenu) careerMenu.style.display = 'none';
@@ -122,19 +126,20 @@ export function initUI() {
         if (scoreOv) try { scoreOv.remove(); } catch(e){}
         document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
 
-        // re-enable AR autoplay (so markers again can start content) and show UI
-        try { AR.setAutoPlayEnabled(true); } catch(e){}
+        try { AR.resetToIdle(); } catch(e){ console.warn('resetToIdle err', e); }
+
         if (careerMenu) careerMenu.style.display = 'flex';
         const careerActions = document.getElementById('career-actions');
         if (careerActions) careerActions.style.display = 'flex';
 
-        // hide back & return buttons
         if (backBtn) backBtn.style.display = 'none';
         const returnBtn2 = document.getElementById('return-btn');
         if (returnBtn2) returnBtn2.style.display = 'none';
 
+        AR.setNoScan(true);
+
         const scanFrame2 = document.getElementById('scan-frame');
-        if (scanFrame2) scanFrame2.style.display = 'flex';
+        if (scanFrame2) scanFrame2.style.display = 'none';
       });
 
     } catch (e) {
@@ -143,8 +148,7 @@ export function initUI() {
       if (careerMenu) careerMenu.style.display = 'flex';
       const careerActions = document.getElementById('career-actions');
       if (careerActions) careerActions.style.display = 'flex';
-      // ensure autoplay re-enabled on error
-      try { AR.setAutoPlayEnabled(true); } catch(e){}
+      try { AR.resetToIdle(); } catch(e){}
     }
   });
 
