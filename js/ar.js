@@ -1,4 +1,4 @@
-// js/ar.js  (แก้ไข: เพิ่ม hideScanFrameThen + AI typo + game asset variant probe)
+// js/ar.js  (fast direct preload: no HEAD, no variant probe)
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -7,20 +7,23 @@ const JOB_ROOT = './Job';
 const careers = ['Computer','AI','Cloud','Data_Center','Network'];
 const candidates = {
   Computer: { model: ['Computer-Model.glb','computer-model.glb','Computer-model.glb'], video: ['Computer.mp4','computer.mp4','Computer-Video.mp4'] },
-  AI:       { model: ['ai-model.glb','AI-model.glb','ai-model.GLTF','AI-Model.glb'], video: ['AI.mp4','ai.mp4','ai-video.mp4'] }, // fixed typo here (Al -> AI)
+  AI:       { model: ['ai-model.glb','AI-model.glb','ai-model.GLTF','AI-Model.glb'], video: ['AI.mp4','ai.mp4','ai-video.mp4'] },
   Cloud:    { model: ['cloud-model.glb','Cloud-model.glb','cloud-model.GLTF'], video: ['video-cloud.mp4','cloud.mp4','cloud-video.mp4'] },
   Data_Center: { model: ['Data_Center-model.glb','Data_Center-model.glb','Data_ Center-model.glb','Data_Center-model.GLTF'], video: ['Data_Center-Video.mp4','data_center.mp4','data-center.mp4'] },
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
+// store loaded asset blobURLs here (by career)
 const assets = {};
-const gameAssets = {}; // mapping for game blobs
+const gameAssets = {}; // store game blobs keyed by filename (e.g. "Computer.png")
 
+// DOM helpers
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
 const careerActions = () => document.getElementById('career-actions');
 const backBtn = () => document.getElementById('backBtn');
 
+// AR state
 let mindarThree, renderer, scene, camera;
 let anchor;
 let gltfModel = null;
@@ -64,25 +67,19 @@ const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
 
-/* ---------------------------
-   helper: hideScanFrameThen
-   (restores behavior from earlier versions)
-   --------------------------- */
+/* ---- simple hideScanFrameThen (used by AR flow) ---- */
 function hideScanFrameThen(callback) {
   const sf = scanFrame();
   if (!sf) {
     if (callback) callback();
     return;
   }
-
-  // if noScanMode or career menu visible -> ensure hidden, then callback
   if (noScanMode) {
     sf.style.display = 'none';
     Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
     if (callback) callback();
     return;
   }
-
   const cm = careerMenu();
   try {
     const cmStyle = cm ? window.getComputedStyle(cm) : null;
@@ -93,93 +90,31 @@ function hideScanFrameThen(callback) {
       return;
     }
   } catch(e){}
-
   const curDisplay = window.getComputedStyle(sf).display;
   if (curDisplay === 'none' || sf.style.display === 'none') {
     if (callback) callback();
     return;
   }
-
-  sf.style.transition = 'opacity 260ms ease';
+  sf.style.transition = 'opacity 180ms ease';
   sf.style.opacity = '1';
   // trigger reflow
   // eslint-disable-next-line no-unused-expressions
   sf.offsetHeight;
   sf.style.opacity = '0';
-
   const tid = setTimeout(() => {
     try {
       sf.style.display = 'none';
       sf.style.transition = '';
       sf.style.opacity = '1';
-      // ensure any inner animation elements are parked
       Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
     } catch (e) {}
     clearTimeout(tid);
     if (callback) callback();
-  }, 300);
+  }, 200);
 }
 
-/* ---------------------------
-   helpers for network (HEAD + fetch with progress)
-   --------------------------- */
-async function tryHead(url) {
-  try {
-    const r = await fetch(url, { method: 'HEAD' });
-    if (r && r.ok) {
-      const len = r.headers.get('Content-Length');
-      return len ? parseInt(len, 10) : null;
-    }
-  } catch(e){}
-  return null;
-}
-
-async function fetchBlobWithProgress(url, onProgress) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`fetch ${url} failed ${res.status}`);
-  const contentLength = res.headers.get('Content-Length');
-  if (!res.body || !contentLength) {
-    const blob = await res.blob();
-    if (onProgress) onProgress({ received: blob.size, total: blob.size }, url);
-    return { blob, size: blob.size };
-  }
-  const total = parseInt(contentLength, 10);
-  const reader = res.body.getReader();
-  let received = 0;
-  const chunks = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    received += value.length;
-    if (onProgress) onProgress({ received, total }, url);
-  }
-  const full = new Blob(chunks);
-  return { blob: full, size: total };
-}
-
-/* try variants for a filename in game_assets to reduce 404s:
-   original, underscore, hyphen, lowercase, lowercase+underscore
-*/
-async function findExistingGameAsset(filename) {
-  const attempts = [];
-  attempts.push(`game_assets/${filename}`);
-  attempts.push(`game_assets/${encodeURI(filename)}`);
-  attempts.push(`game_assets/${filename.replace(/\s+/g,'_')}`);
-  attempts.push(`game_assets/${filename.replace(/\s+/g,'-')}`);
-  attempts.push(`game_assets/${filename.toLowerCase()}`);
-  attempts.push(`game_assets/${filename.toLowerCase().replace(/\s+/g,'_')}`);
-  for (const u of attempts) {
-    try {
-      const head = await fetch(u, { method: 'HEAD' });
-      if (head && head.ok) return u;
-    } catch(e){}
-  }
-  // not found -> return first (will 404 later)
-  return attempts[0];
-}
-
-async function runQueue(tasks, concurrency, onTaskDone) {
+/* ---- very simple concurrency runner ---- */
+async function runQueue(tasks, concurrency) {
   const results = new Array(tasks.length);
   let idx = 0;
   let running = 0;
@@ -195,12 +130,10 @@ async function runQueue(tasks, concurrency, onTaskDone) {
         tasks[i]().then(res => {
           running--;
           results[i] = { ok: true, value: res };
-          if (onTaskDone) onTaskDone(i, true, res);
           next();
         }).catch(err => {
           running--;
           results[i] = { ok: false, err };
-          if (onTaskDone) onTaskDone(i, false, err);
           next();
         });
       }
@@ -209,10 +142,14 @@ async function runQueue(tasks, concurrency, onTaskDone) {
   });
 }
 
-/* ---------------------------
-   preloadAll: phased loader (marker -> computer -> careers -> game)
-   --------------------------- */
+/**
+ * preloadAll(onProgress)
+ * - NO HEAD, NO CHECKS. Load directly.
+ * - concurrency: default 6 (fast but not insane).
+ * - onProgress receives { pct, doneCount, totalCount, url, phase, startReady, done }
+ */
 export async function preloadAll(onProgress = ()=>{}) {
+  // Build URL list (straight, no probing)
   const groups = [
     { name: 'marker', urls: [`${JOB_ROOT}/Computer/marker.mind`] },
     { name: 'computer', urls: [] },
@@ -220,111 +157,70 @@ export async function preloadAll(onProgress = ()=>{}) {
     { name: 'game', urls: [] }
   ];
 
-  // helper: pick existing candidate in JOB_ROOT for a career
-  async function pickExisting(pathList, career) {
-    for (const name of pathList) {
-      const url = `${JOB_ROOT}/${career}/${name}`;
-      try {
-        const r = await fetch(url, { method: 'HEAD' });
-        if (r && r.ok) return url;
-      } catch(e){}
-    }
-    return `${JOB_ROOT}/${career}/${pathList[0]}`;
-  }
-
-  const compModelUrl = await pickExisting(candidates.Computer.model, 'Computer');
-  const compVideoUrl = await pickExisting(candidates.Computer.video, 'Computer');
-  groups[1].urls.push(compModelUrl, compVideoUrl);
+  // use first candidate filename (no checking)
+  groups[1].urls.push(`${JOB_ROOT}/Computer/${candidates.Computer.model[0]}`);
+  groups[1].urls.push(`${JOB_ROOT}/Computer/${candidates.Computer.video[0]}`);
 
   for (const career of careers) {
     if (career === 'Computer') continue;
-    const modelUrl = await pickExisting(candidates[career].model, career);
-    const videoUrl = await pickExisting(candidates[career].video, career);
-    groups[2].urls.push(modelUrl, videoUrl);
+    groups[2].urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
+    groups[2].urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
   }
 
-  // parse manifest and try to resolve actual existing filenames
+  // read manifest.json quickly (if exists) to include game assets (no probes)
   try {
     const mf = await fetch('game_assets/manifest.json');
     if (mf && mf.ok) {
       const manifest = await mf.json();
       for (const item of manifest) {
-        if (item.image) {
-          const good = await findExistingGameAsset(item.image);
-          groups[3].urls.push(good);
-        }
-        if (item.audioWord) {
-          const good = await findExistingGameAsset(item.audioWord);
-          groups[3].urls.push(good);
-        }
-        if (item.audioMeaning) {
-          const good = await findExistingGameAsset(item.audioMeaning);
-          groups[3].urls.push(good);
-        }
+        if (item.image) groups[3].urls.push(`game_assets/${item.image}`);
+        if (item.audioWord) groups[3].urls.push(`game_assets/${item.audioWord}`);
+        if (item.audioMeaning) groups[3].urls.push(`game_assets/${item.audioMeaning}`);
       }
-      const sfxNames = ['flip.wav','match.wav','wrong.wav','win.mp3'];
-      for (const s of sfxNames) {
-        const good = await findExistingGameAsset(`sfx/${s}`);
-        groups[3].urls.push(good);
-      }
+      // also include sfx list (common)
+      const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
+      for (const f of sfx) groups[3].urls.push(`game_assets/sfx/${f}`);
     }
   } catch(e){
-    // ignore manifest missing
+    // manifest not present or fetch failed -> skip game group
   }
 
-  // deduplicate while preserving order
+  // flatten & dedupe preserving order
   const seen = new Set();
+  const urls = [];
   for (const g of groups) {
-    g.urls = g.urls.filter(u => {
-      if (!u) return false;
-      if (seen.has(u)) return false;
-      seen.add(u);
-      return true;
-    });
+    for (const u of g.urls) {
+      if (!u) continue;
+      if (!seen.has(u)) { seen.add(u); urls.push({ url: u, phase: g.name }); }
+    }
   }
 
-  // HEAD pass to estimate sizes
-  const allUrls = groups.reduce((arr,g)=>arr.concat(g.urls),[]);
-  const headPromises = allUrls.map(u => tryHead(u).then(size => ({ url:u, size })));
-  const headResults = await Promise.all(headPromises);
-  let totalKnown = 0;
-  let unknownCount = 0;
-  const meta = headResults.map(h => {
-    if (h.size && !Number.isNaN(h.size)) { totalKnown += h.size; return { url: h.url, size: h.size }; }
-    unknownCount++;
-    return { url: h.url, size: null };
-  });
-
-  const avg = meta.filter(m=>m.size).length ? (totalKnown / meta.filter(m=>m.size).length) : (60*1024);
-  const estimatedTotal = totalKnown + unknownCount * avg;
-
-  const perUrlLoaded = {};
-  let bytesLoaded = 0;
-  function reportProgress(url, phase) {
-    bytesLoaded = Object.values(perUrlLoaded).reduce((a,b)=>a+(b||0),0);
-    const fraction = Math.min(1, (estimatedTotal>0 ? bytesLoaded/estimatedTotal : 0));
-    const pct = Math.round(fraction * 100);
-    onProgress({ pct, bytesLoaded, estimatedTotal, url, phase, startReady: fraction >= 0.5, done: false });
+  const total = urls.length;
+  let doneCount = 0;
+  function report(url, phase) {
+    doneCount++;
+    const frac = total > 0 ? (doneCount / total) : 1;
+    const pct = Math.round(frac * 100);
+    onProgress({ pct, doneCount, totalCount: total, url, phase, startReady: frac >= 0.5, done: doneCount >= total });
   }
 
-  const concurrency = 3;
-  let currentPhase = '';
+  // create tasks
+  const tasks = urls.map(item => async () => {
+    const u = item.url;
+    const phase = item.phase;
+    try {
+      const r = await fetch(encodeURI(u));
+      if (!r.ok) {
+        console.warn('preload failed', u, r.status);
+        report(u, phase);
+        return { url: u, ok: false, status: r.status };
+      }
+      const blob = await r.blob();
+      const blobUrl = URL.createObjectURL(blob);
 
-  for (const g of groups) {
-    currentPhase = g.name;
-    if (!g.urls || g.urls.length === 0) continue;
-    const tasks = g.urls.map(u => async () => {
-      const res = await fetchBlobWithProgress(u, (progress, url) => {
-        if (progress && progress.received != null) {
-          perUrlLoaded[u] = progress.received;
-          reportProgress(u, currentPhase);
-        }
-      });
-      perUrlLoaded[u] = res.size || res.blob.size || avg;
-      reportProgress(u, currentPhase);
-      const blobUrl = URL.createObjectURL(res.blob);
-
+      // store mapping
       if (u.startsWith(`${JOB_ROOT}/`)) {
+        // ./Job/CAREER/file
         const parts = u.split('/');
         const career = parts[2];
         if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
@@ -337,25 +233,28 @@ export async function preloadAll(onProgress = ()=>{}) {
       } else {
         gameAssets[u] = blobUrl;
       }
-      return { url: u, blobUrl, size: res.size };
-    });
 
-    await runQueue(tasks, concurrency, (i, ok, res) => {
-      const u = g.urls[i];
-      reportProgress(u, currentPhase);
-    });
+      report(u, phase);
+      return { url: u, ok: true, blobUrl };
+    } catch (err) {
+      console.warn('preload error', u, err);
+      report(u, phase);
+      return { url: u, ok: false, err };
+    }
+  });
 
-    reportProgress(null, currentPhase);
-  }
+  const concurrency = 6; // tuned for speed; reduce if your server throttles
+  await runQueue(tasks, concurrency);
 
-  bytesLoaded = Object.values(perUrlLoaded).reduce((a,b)=>a+(b||0),0);
-  onProgress({ pct: 100, bytesLoaded, estimatedTotal, url: null, phase: 'done', startReady: true, done:true });
+  // final
+  onProgress({ pct: 100, doneCount: total, totalCount: total, url: null, phase: 'done', startReady: true, done: true });
 
+  // expose game assets on assets.gameAssets
   assets.gameAssets = gameAssets;
   return assets;
 }
 
-/* --- remaining AR logic (unchanged, kept same behavior) --- */
+/* ---- Remaining AR logic (unchanged) ---- */
 
 function createLights(scene) {
   const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
@@ -490,7 +389,7 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
-  // initial attach (hidden + paused) - uses preloaded assets if available
+  // initial attach (hidden + paused) - use preloaded assets if available
   const comp = assets['Computer'] || {};
   const g = await loadGLTF(comp.modelBlobUrl);
   const v = makeVideoElem(comp.videoBlobUrl);
@@ -501,7 +400,6 @@ export async function initAndStart(containerElement) {
 
   anchor.onTargetFound = () => {
     isAnchorTracked = true;
-
     hideScanFrameThen(() => {
       try { if (gltfModel) gltfModel.visible = true; } catch(e){}
       try { if (videoMesh) videoMesh.visible = true; } catch(e){}
@@ -564,6 +462,7 @@ export async function initAndStart(containerElement) {
   });
 }
 
+// exported UI actions (unchanged)
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
