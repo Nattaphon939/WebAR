@@ -1,6 +1,4 @@
-// js/ar.js  (DRACO-enabled + fast preloadCritical/preloadRemaining)
-// เพิ่ม DRACOLoader ให้ GLTFLoader รู้วิธีคลาย Draco-compressed .glb
-
+// js/ar.js
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -61,16 +59,11 @@ export function setNoScan(flag) {
 }
 
 /* ---------- DRACO setup ---------- */
-// create one DRACOLoader instance and reuse it.
-// By default we use Google's public decoder path which is reliable for web hosting.
-// If you want to host decoders locally (offline), change the path to your local folder.
 let dracoLoader = null;
 function ensureDracoInitialized() {
   if (dracoLoader) return dracoLoader;
   dracoLoader = new DRACOLoader();
-  // default CDN (Google). Change to your path if you host locally.
-  dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-  // optionally: dracoLoader.setDecoderConfig({ type: 'js' }); // or 'wasm' if needed
+  dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/'); // default CDN
   return dracoLoader;
 }
 
@@ -150,7 +143,118 @@ async function runQueue(tasks, concurrency = 4) {
   });
 }
 
-/* ---------- Preload: critical (marker + Computer + one other) ---------- */
+/* ---------- Fetch with progress (streams) ---------- */
+async function fetchWithProgress(url, onProgress = ()=>{}) {
+  const resp = await fetch(encodeURI(url));
+  if (!resp.ok) throw new Error(`fetch failed ${url} ${resp.status}`);
+  const contentLength = resp.headers.get('Content-Length');
+  if (!resp.body || !contentLength) {
+    // fallback: no streaming available or no content-length -> just blob
+    const blob = await resp.blob();
+    onProgress(100);
+    return blob;
+  }
+  const total = parseInt(contentLength, 10);
+  const reader = resp.body.getReader();
+  let received = 0;
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    const pct = Math.round((received / total) * 100);
+    onProgress(pct);
+  }
+  // combine
+  let size = 0;
+  for (const c of chunks) size += c.length;
+  const combined = new Uint8Array(size);
+  let offset = 0;
+  for (const c of chunks) { combined.set(c, offset); offset += c.length; }
+  return new Blob([combined]);
+}
+
+/* ---------- Per-career ensure loaded (export) ---------- */
+/**
+ * ensureCareerLoaded(career, onProgress) -> Promise
+ * - loads model + video for career if not already loaded
+ * - onProgress called with pct 0..100 (combined average of model+video)
+ * - dispatches document event 'career-load-progress' with detail {career, pct}
+ */
+export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
+  if (!career || !careers.includes(career)) throw new Error('invalid career ' + career);
+  // if already present and both blobUrls exist -> done
+  const a = assets[career] || {};
+  const alreadyModel = !!(a.modelBlobUrl);
+  const alreadyVideo = !!(a.videoBlobUrl);
+
+  if (alreadyModel && alreadyVideo) {
+    onProgress(100);
+    document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100 } }));
+    return assets[career];
+  }
+
+  // choose file names (first candidate)
+  const modelName = `${JOB_ROOT}/${career}/${candidates[career].model[0]}`;
+  const videoName = `${JOB_ROOT}/${career}/${candidates[career].video[0]}`;
+
+  let modelPct = alreadyModel ? 100 : 0;
+  let videoPct = alreadyVideo ? 100 : 0;
+
+  function emitCombined() {
+    const combined = Math.round((modelPct + videoPct) / 2);
+    onProgress(combined);
+    document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: combined } }));
+  }
+  emitCombined();
+
+  // tasks
+  const tasks = [];
+  if (!alreadyModel) {
+    tasks.push((async () => {
+      try {
+        const blob = await fetchWithProgress(modelName, (p)=> { modelPct = p; emitCombined(); });
+        const url = URL.createObjectURL(blob);
+        if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+        assets[career].modelBlobUrl = url;
+        modelPct = 100; emitCombined();
+        return { ok:true };
+      } catch(e) {
+        console.warn('ensureCareerLoaded model err', career, e);
+        modelPct = 100; emitCombined();
+        return { ok:false, err:e };
+      }
+    })());
+  }
+  if (!alreadyVideo) {
+    tasks.push((async () => {
+      try {
+        const blob = await fetchWithProgress(videoName, (p)=> { videoPct = p; emitCombined(); });
+        const url = URL.createObjectURL(blob);
+        if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+        assets[career].videoBlobUrl = url;
+        videoPct = 100; emitCombined();
+        return { ok:true };
+      } catch(e) {
+        console.warn('ensureCareerLoaded video err', career, e);
+        videoPct = 100; emitCombined();
+        return { ok:false, err:e };
+      }
+    })());
+  }
+
+  await Promise.all(tasks);
+  emitCombined();
+  return assets[career];
+}
+
+export function isCareerReady(career) {
+  const a = assets[career] || {};
+  return !!(a && a.modelBlobUrl && a.videoBlobUrl);
+}
+
+/* ---------- Preload: critical & remaining (existing logic) ---------- */
 export async function preloadCritical(onProgress = ()=>{}) {
   const secondCareer = careers.find(c=>c !== 'Computer') || 'AI';
   const urls = [];
@@ -216,7 +320,6 @@ export async function preloadCritical(onProgress = ()=>{}) {
   return assets;
 }
 
-/* ---------- Preload remaining in background (silent) ---------- */
 export async function preloadRemaining() {
   const urls = [];
   for (const career of careers) {
@@ -295,15 +398,10 @@ function loadGLTF(blobUrl) {
   return new Promise((resolve) => {
     if (!blobUrl) return resolve(null);
     const loader = new GLTFLoader();
-
-    // ensure draco initialized and attach DRACOLoader to GLTFLoader so compressed meshes decode
     try {
       const dr = ensureDracoInitialized();
       loader.setDRACOLoader(dr);
-    } catch(e) {
-      console.warn('draco init failed', e);
-    }
-
+    } catch(e) { console.warn('draco init failed', e); }
     loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
   });
 }
@@ -596,13 +694,4 @@ export function resetToIdle() {
 }
 
 export function getAssets() { return assets; }
-
-/* ---------- helpers ---------- */
-function createLights(scene) {
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
-  hemi.position.set(0,1,0);
-  scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff,1);
-  dir.position.set(0,1,1);
-  scene.add(dir);
-}
+export { preloadCritical, preloadRemaining, ensureCareerLoaded, isCareerReady };

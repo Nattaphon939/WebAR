@@ -10,9 +10,7 @@ html,body{height:100%;margin:0;background:#000;color:#fff;overflow:hidden;font-f
 
 /* scan frame (initial) - neon outer removed */
 #scan-frame{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:20}
-/* Remove neon border: keep a subtle rounded holder without bright neon */
 .frame{width:68vmin;height:68vmin;border-radius:12px;border:2px solid rgba(255,255,255,0.03);box-shadow:0 0 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center}
-/* hide decorative neon corners */
 .corner{display:none}
 
 /* FORCE-HIDE scan visuals when body.no-scan present (important rules so nothing leaks through) */
@@ -48,16 +46,91 @@ body.no-scan #scan-frame::after {
 }
 #career-menu h2{margin:0;color:var(--accent); font-size:20px; text-shadow:0 0 6px rgba(0,188,212,0.15);}
 .career-list{display:flex;flex-direction:column;width:100%;gap:10px;margin-top:8px;}
-.career-btn{width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(90deg,#0077ff,#00bcd4);color:#000;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,188,212,0.08);transition:transform .12s}
+
+/* career button base */
+.career-btn{
+  position:relative;
+  overflow:hidden;
+  width:100%;
+  padding:0;
+  border-radius:10px;
+  border:none;
+  background:linear-gradient(90deg,#0077ff,#00bcd4);
+  color:#000;
+  font-weight:700;
+  cursor:pointer;
+  box-shadow:0 6px 18px rgba(0,188,212,0.08);
+  transition:transform .12s, filter .12s, opacity .12s;
+  height:48px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
 .career-btn:active{transform:translateY(1px);}
 
-/* career actions (shown after selecting a career except Computer) */
+/* inner content layout */
+.career-btn-inner{
+  position:relative;
+  width:100%;
+  padding:10px 14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+}
+.career-label{z-index:3;font-weight:800;color:#001018;}
+
+/* progress bar inside button */
+.career-progress-wrap{
+  position:absolute;
+  left:0;
+  bottom:0;
+  height:4px;
+  width:100%;
+  background:rgba(255,255,255,0.06);
+  z-index:1;
+}
+.career-progress-bar{
+  height:100%;
+  width:0%;
+  background:linear-gradient(90deg,var(--accent),#0077ff);
+  transition:width 120ms linear;
+}
+
+/* disabled / waiting state: gray + subdued */
+.career-btn.career-waiting{
+  background: linear-gradient(90deg, rgba(180,180,180,0.12), rgba(120,120,120,0.06));
+  color: #cbd5e1;
+  cursor:default;
+  filter:grayscale(.05) brightness(.95);
+  opacity:0.95;
+}
+
+/* ready state: full color */
+.career-btn.career-ready{
+  background:linear-gradient(90deg,#0077ff,#00bcd4);
+  color:#001018;
+  cursor:pointer;
+}
+
+/* small loading indicator state */
+.career-btn.career-loading{
+  filter:brightness(.95) saturate(1.05);
+}
+
+/* career actions and action buttons */
 #career-actions{width:100%;display:none;flex-direction:column;gap:8px;margin-top:8px}
 .action-btn{width:100%;padding:10px;border-radius:10px;border:none;background:rgba(255,255,255,0.06);color:#fff;font-weight:700;cursor:pointer}
 
-/* return button at bottom of card */
+/* return button row */
 #return-row{width:100%;margin-top:6px;display:flex;justify-content:center}
 #return-btn{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.03);color:#fff;cursor:pointer}
 
 /* back top-left */
 #backBtn{position:fixed;left:12px;top:12px;display:none;z-index:200;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.5);color:var(--accent);cursor:pointer}
+
+/* small responsive tweaks */
+@media (max-width:520px) {
+  .frame{width:82vmin;height:82vmin}
+  .career-btn{height:54px}
+}
