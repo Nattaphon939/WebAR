@@ -224,40 +224,53 @@ export function isCareerReady(career) {
   return !!(a && a.modelBlobUrl && a.videoBlobUrl);
 }
 
-/* preloadCritical: phase ordering (Computer first, others sequential, game assets last) */
+/* preloadCritical: phase ordering (Computer first, show progress only for Computer + first other career) */
 export async function preloadCritical(onProgress = ()=>{}) {
   try {
-    onProgress({ phase:'phaseA-start', pct: 0 });
+    // start at 0
+    try { onProgress({ pct: 0, startReady: false }); } catch(e){}
+    // 1) Computer first — map 0..100 -> 0..50 overall
     await ensureCareerLoaded('Computer', (pct, file, type) => {
-      onProgress({ phase:'phaseA-career', career:'Computer', pct, file, type, startReady:false });
+      const overall = Math.round((pct * 0.5));
+      try { onProgress({ pct: overall, startReady: false }); } catch(e){}
     });
   } catch(e) {
-    onProgress({ phase:'phaseA-error', pct: 10 });
+    try { onProgress({ pct: 10, startReady: false }); } catch(e){}
   }
 
+  // find next career used to show second half of the bar (first non-Computer)
   const order = [...careers].filter(c => c !== 'Computer');
+  let firstDisplayedOther = null;
   for (let ci=0; ci<order.length; ci++) {
     const career = order[ci];
     try {
       await ensureCareerLoaded(career, (pct, file, type) => {
-        const doneCareers = ci + (pct/100);
-        const overall = Math.round((doneCareers / order.length) * 100);
-        onProgress({ phase:'phaseB-career', career, pct, file, type, overall });
+        // only update the main loading bar for the first OTHER career encountered
+        if (!firstDisplayedOther) {
+          const overall = 50 + Math.round(pct * 0.5); // 50..100
+          try { onProgress({ pct: overall, startReady: overall >= 100 }); } catch(e){}
+        }
       });
+      if (!firstDisplayedOther && isCareerReady(career)) {
+        firstDisplayedOther = career;
+      }
     } catch(e) {
-      onProgress({ phase:'phaseB-career-error', career, pct:100 });
+      // ignore per-career errors for progress bar; still continue loading others
     }
+
+    // after attempting each career, if Computer + at least one other is ready, signal startReady
     try {
       const compReady = isCareerReady('Computer');
-      const readyCount = careers.reduce((acc,c)=> acc + (isCareerReady(c) ? 1 : 0), 0);
-      const startOk = compReady && readyCount >= 2;
-      onProgress({ phase:'check-start', startReady: startOk, pct: 0 });
+      const startOk = compReady && !!firstDisplayedOther;
+      if (startOk) {
+        try { onProgress({ pct: 100, startReady: true }); } catch(e){}
+        break; // we've satisfied start condition — still continue loading remaining careers quietly below
+      }
     } catch(e){}
   }
 
-  // Phase C - game assets last
+  // Phase C - game assets last (we don't update the main 0..100 bar per-file; just run quietly)
   try {
-    onProgress({ phase:'phaseC-start', pct: 0 });
     const mfRes = await fetch(encodeURI('game_assets/manifest.json'));
     if (mfRes && mfRes.ok) {
       const mf = await mfRes.json();
@@ -268,30 +281,23 @@ export async function preloadCritical(onProgress = ()=>{}) {
         if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
       }
       list.push('game_assets/sfx/flip.wav','game_assets/sfx/match.wav','game_assets/sfx/wrong.wav','game_assets/sfx/win.mp3');
-      let done = 0;
       await runQueue(list.map(u=> async () => {
         try {
           const r = await fetch(encodeURI(u));
-          if (!r.ok) { done++; onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) }); return; }
+          if (!r.ok) return;
           const b = await r.blob();
           const url = URL.createObjectURL(b);
           gameAssets[u.replace('game_assets/','')] = url;
-          done++;
-          onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) });
-        } catch(e) {
-          done++;
-          onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) });
-        }
+        } catch(e) { /* ignore */ }
       }), 6);
-    } else {
-      onProgress({ phase:'phaseC', pct: 50 });
     }
   } catch(e) {
-    onProgress({ phase:'phaseC-error', pct: 50 });
+    // ignore
   }
 
   assets.gameAssets = gameAssets;
-  onProgress({ phase:'critical-done', pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) });
+  // final ensure we send 100% to main loader if not already
+  try { onProgress({ pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) }); } catch(e){}
   return assets;
 }
 
@@ -448,6 +454,7 @@ function attachContentToAnchor(gltf, video) {
     gltfModel.scale.set(0.4,0.4,0.4);
     // place model slightly in front (z positive)
     gltfModel.position.set(-0.25, -0.45, 0.02);
+    // default invisible initially — caller will set visible when appropriate
     gltfModel.visible = false;
     try { anchor.group.add(gltfModel); } catch(e){}
     try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
@@ -526,6 +533,10 @@ async function ensureContentForCareer(career) {
     if (g) {
       try { anchor.group.add(g.scene); } catch(e){}
       attachContentToAnchor(g, null); // will re-add model (and preserve existing video if any)
+      // If anchor currently tracked, make model visible now
+      if (isAnchorTracked && gltfModel) {
+        try { gltfModel.visible = true; if (mixer) mixer.timeScale = 1; } catch(e){}
+      }
     }
   }
   // load video if missing
@@ -535,6 +546,9 @@ async function ensureContentForCareer(career) {
       // if model is present, attach both properly
       const dummyGltf = gltfModel ? { scene: gltfModel } : null;
       attachContentToAnchor(dummyGltf, v);
+      if (isAnchorTracked && videoElem) {
+        try { videoMesh.visible = true; } catch(e){}
+      }
     }
   }
 }
@@ -607,6 +621,11 @@ export async function initAndStart(containerElement) {
   const g = comp.modelBlobUrl ? await loadGLTF(comp.modelBlobUrl) : null;
   const v = comp.videoBlobUrl ? makeVideoElem(comp.videoBlobUrl) : null;
   attachContentToAnchor(g, v);
+  // if we are already tracking (unlikely here), show model/video; otherwise they will be shown on first target found
+  if (isAnchorTracked) {
+    try { if (gltfModel) gltfModel.visible = true; if (videoMesh) videoMesh.visible = true; } catch(e){}
+  }
+
   playingCareer = 'Computer';
   lastCareer = 'Computer';
   if (careerActions()) careerActions().style.display = 'none';
@@ -618,6 +637,7 @@ export async function initAndStart(containerElement) {
       // ensure content exists and re-attach if needed
       try { await ensureContentForCareer(playingCareer); } catch(e){}
       ensureAttachedAndVisible();
+
       // resume if paused by tracking loss
       if (!autoPlayEnabled) return;
       if (pausedByTrackingLoss) {
@@ -627,8 +647,12 @@ export async function initAndStart(containerElement) {
         waitingForMarkerPlay = false;
         return;
       }
+
       // if waiting for marker, start both model + video together
       const startNow = () => {
+        if (gltfModel) {
+          try { gltfModel.visible = true; } catch(e){}
+        }
         if (mixer) try { mixer.timeScale = 1; } catch(e){}
         if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
       };
@@ -696,6 +720,7 @@ export async function playCareer(career) {
     isPausedByBack = false;
     try { if (videoElem && videoElem.paused) videoElem.play(); } catch(e){}
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
+    if (gltfModel) try { gltfModel.visible = true; } catch(e){}
     return;
   }
 
@@ -738,6 +763,7 @@ export async function playCareer(career) {
     }, 500);
     waitingForMarkerPlay = false;
   } else {
+    // wait for anchor; when found, anchor.onTargetFound will call ensureContentForCareer and then play both
     waitingForMarkerPlay = true;
   }
 }
