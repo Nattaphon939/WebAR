@@ -1,7 +1,10 @@
-// js/ar.js  (fixed: removed duplicate export)
+// js/ar.js  (DRACO-enabled + fast preloadCritical/preloadRemaining)
+// เพิ่ม DRACOLoader ให้ GLTFLoader รู้วิธีคลาย Draco-compressed .glb
+
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 const JOB_ROOT = './Job';
 const careers = ['Computer','AI','Cloud','Data_Center','Network'];
@@ -57,6 +60,21 @@ export function setNoScan(flag) {
   }
 }
 
+/* ---------- DRACO setup ---------- */
+// create one DRACOLoader instance and reuse it.
+// By default we use Google's public decoder path which is reliable for web hosting.
+// If you want to host decoders locally (offline), change the path to your local folder.
+let dracoLoader = null;
+function ensureDracoInitialized() {
+  if (dracoLoader) return dracoLoader;
+  dracoLoader = new DRACOLoader();
+  // default CDN (Google). Change to your path if you host locally.
+  dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+  // optionally: dracoLoader.setDecoderConfig({ type: 'js' }); // or 'wasm' if needed
+  return dracoLoader;
+}
+
+/* ---------- utility / AR helpers ---------- */
 const tmpObj = new THREE.Object3D();
 const tmpQuat = new THREE.Quaternion();
 const parentWorldQuat = new THREE.Quaternion();
@@ -66,7 +84,6 @@ const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
 
-/* small helper to hide scan frame then callback */
 function hideScanFrameThen(callback) {
   const sf = scanFrame();
   if (!sf) { if (callback) callback(); return; }
@@ -90,8 +107,6 @@ function hideScanFrameThen(callback) {
   if (curDisplay === 'none' || sf.style.display === 'none') { if (callback) callback(); return; }
   sf.style.transition = 'opacity 180ms ease';
   sf.style.opacity = '1';
-  // trigger reflow
-  // eslint-disable-next-line no-unused-expressions
   sf.offsetHeight;
   sf.style.opacity = '0';
   const tid = setTimeout(() => {
@@ -106,7 +121,7 @@ function hideScanFrameThen(callback) {
   }, 200);
 }
 
-/* very small concurrency runner */
+/* simple concurrency runner */
 async function runQueue(tasks, concurrency = 4) {
   const results = new Array(tasks.length);
   let idx = 0;
@@ -135,29 +150,16 @@ async function runQueue(tasks, concurrency = 4) {
   });
 }
 
-/**
- * preloadCritical(onProgress)
- * - NO HEAD. Direct fetch of minimal assets required to start playing Computer + one more career (first after Computer).
- * - onProgress receives an object { pct, doneCount, totalCount, url, phase, startReady, done }
- * - returns assets object (same shape as getAssets)
- */
+/* ---------- Preload: critical (marker + Computer + one other) ---------- */
 export async function preloadCritical(onProgress = ()=>{}) {
-  // list of urls to load (marker + Computer model+video + secondCareer model+video)
   const secondCareer = careers.find(c=>c !== 'Computer') || 'AI';
   const urls = [];
-
-  // marker
   urls.push({ url: `${JOB_ROOT}/Computer/marker.mind`, phase:'marker' });
-
-  // Computer model + video (take first candidate names)
   urls.push({ url: `${JOB_ROOT}/Computer/${candidates.Computer.model[0]}`, phase:'computer' });
   urls.push({ url: `${JOB_ROOT}/Computer/${candidates.Computer.video[0]}`, phase:'computer' });
-
-  // second career
   urls.push({ url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].model[0]}`, phase:'career' });
   urls.push({ url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].video[0]}`, phase:'career' });
 
-  // dedupe
   const seen = new Set();
   const final = [];
   for (const it of urls) {
@@ -175,7 +177,6 @@ export async function preloadCritical(onProgress = ()=>{}) {
     onProgress({ pct, doneCount, totalCount: total, url: u, phase, startReady: frac >= 1/2, done: doneCount >= total });
   }
 
-  // create tasks
   const tasks = final.map(item => async () => {
     const u = item.url;
     const phase = item.phase;
@@ -189,7 +190,6 @@ export async function preloadCritical(onProgress = ()=>{}) {
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
 
-      // store mapping
       if (u.startsWith(`${JOB_ROOT}/`)) {
         const parts = u.split('/');
         const career = parts[2];
@@ -210,35 +210,22 @@ export async function preloadCritical(onProgress = ()=>{}) {
     }
   });
 
-  // concurrency tuned for GitHub + mobiles; you can increase if your host supports more
   await runQueue(tasks, 6);
-
-  // final report
   onProgress({ pct: 100, doneCount: total, totalCount: total, url: null, phase: 'critical-done', startReady: true, done:true });
-
-  // expose gameAssets
   assets.gameAssets = gameAssets;
   return assets;
 }
 
-/**
- * preloadRemaining()
- * - loads everything else in background (silent)
- * - no progress reporting (silent)
- */
+/* ---------- Preload remaining in background (silent) ---------- */
 export async function preloadRemaining() {
-  // build list: all career model+video (take first candidate), plus game assets from manifest, plus sfx
   const urls = [];
-
   for (const career of careers) {
-    // if already loaded skip
     if (!assets[career] || (!assets[career].modelBlobUrl || !assets[career].videoBlobUrl)) {
       urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
       urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
     }
   }
 
-  // try manifest quickly
   try {
     const mf = await fetch('game_assets/manifest.json');
     if (mf && mf.ok) {
@@ -249,20 +236,17 @@ export async function preloadRemaining() {
         if (item.audioMeaning) urls.push(`game_assets/${item.audioMeaning}`);
       }
     }
-  } catch(e){ /* ignore */ }
+  } catch(e){}
 
-  // common sfx
   const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
   for (const f of sfx) urls.push(`game_assets/sfx/${f}`);
 
-  // dedupe and remove already loaded (gameAssets)
   const final = [];
   const seen = new Set();
   for (const u of urls) {
     if (!u) continue;
     if (seen.has(u)) continue;
     seen.add(u);
-    // if job asset and assets map already has blobUrl skip
     if (u.startsWith(`${JOB_ROOT}/`)) {
       const parts = u.split('/');
       const career = parts[2];
@@ -279,7 +263,6 @@ export async function preloadRemaining() {
     final.push(u);
   }
 
-  // silent load with concurrency small
   const tasks = final.map(u => async () => {
     try {
       const r = await fetch(encodeURI(u));
@@ -304,26 +287,23 @@ export async function preloadRemaining() {
     }
   });
 
-  // run in background but don't await to block UI (we still want to return a promise so caller can optionally wait)
-  // return the promise so caller may ignore or await
   return runQueue(tasks, 4);
 }
 
-/* ---------- rest of AR logic (unchanged) ---------- */
-
-function createLights(scene) {
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
-  hemi.position.set(0,1,0);
-  scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff,1);
-  dir.position.set(0,1,1);
-  scene.add(dir);
-}
-
+/* ---------- GLTF loading (uses DRACO) ---------- */
 function loadGLTF(blobUrl) {
   return new Promise((resolve) => {
     if (!blobUrl) return resolve(null);
     const loader = new GLTFLoader();
+
+    // ensure draco initialized and attach DRACOLoader to GLTFLoader so compressed meshes decode
+    try {
+      const dr = ensureDracoInitialized();
+      loader.setDRACOLoader(dr);
+    } catch(e) {
+      console.warn('draco init failed', e);
+    }
+
     loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
   });
 }
@@ -431,6 +411,7 @@ function attachContentToAnchor(gltf, video) {
   }
 }
 
+/* ---------- init + AR loop ---------- */
 export async function initAndStart(containerElement) {
   mindarThree = new MindARThree({
     container: containerElement,
@@ -517,6 +498,7 @@ export async function initAndStart(containerElement) {
   });
 }
 
+/* ---------- UI actions (play/pause/reset) ---------- */
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
@@ -614,3 +596,13 @@ export function resetToIdle() {
 }
 
 export function getAssets() { return assets; }
+
+/* ---------- helpers ---------- */
+function createLights(scene) {
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+  hemi.position.set(0,1,0);
+  scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff,1);
+  dir.position.set(0,1,1);
+  scene.add(dir);
+}
