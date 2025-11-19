@@ -10,67 +10,78 @@ const container = document.getElementById('container');
 const scanFrame = document.getElementById('scan-frame');
 
 let startShown = false;
-let criticalLoaded = false;
+
+function showStartButton() {
+  if (startShown) return;
+  startShown = true;
+  startButton.style.display = 'inline-block';
+  loadingText.textContent = 'พร้อมแล้ว — แตะเพื่อเริ่ม AR';
+  bar.style.width = '100%';
+}
 
 async function main() {
-  startButton.style.display = 'none';
-  loadingText.textContent = 'เตรียมทรัพยากรสำคัญ... 0%';
-  bar.style.width = '0%';
+  // 1) preload critical (marker + Computer + one more career)
+  try {
+    const criticalPromise = preloadCritical((info) => {
+      // info: { pct, doneCount, totalCount, url, phase, startReady, done }
+      try {
+        const pct = info && info.pct ? info.pct : 0;
+        bar.style.width = pct + '%';
+        loadingText.textContent = `กำลังเตรียมทรัพยากร... ${pct}%`;
+      } catch(e){}
+      // if Computer ready in getAssets -> show start button immediately
+      try {
+        const assets = getAssets();
+        if (!startShown && assets && assets.Computer && assets.Computer.modelBlobUrl && assets.Computer.videoBlobUrl) {
+          showStartButton();
+        } else if (!startShown && info && info.startReady) {
+          // fallback: if startReady flagged by preloadCritical
+          showStartButton();
+        }
+      } catch(e){}
+    });
 
-  // preload critical assets only (marker + Computer + 1 career)
-  preloadCritical((state) => {
-    const pct = state && state.pct ? state.pct : 0;
-    bar.style.width = pct + '%';
-    if (state && state.phase) {
-      loadingText.textContent = `${state.phase} — ${pct}%`;
-    } else {
-      loadingText.textContent = `เตรียมทรัพยากร... ${pct}%`;
-    }
+    // even if callback didn't show start, wait until the first bits are done (we also check assets)
+    criticalPromise.then((assets) => {
+      // ensure computer marked ready event for UI if necessary
+      try {
+        const a = getAssets();
+        if (a && a.Computer && a.Computer.modelBlobUrl && a.Computer.videoBlobUrl) {
+          showStartButton();
+          // update text
+          loadingText.textContent = 'คอนเท้นต์พร้อม ใช้ได้ — แตะเพื่อเริ่ม AR';
+        }
+      } catch(e){}
+      // start background preloadRemaining (do not await here)
+      preloadRemaining().catch(e=>console.warn('preloadRemaining err', e));
+    }).catch(err => {
+      console.warn('preloadCritical promise err', err);
+      // still allow start button (best-effort)
+      showStartButton();
+      preloadRemaining().catch(e=>console.warn('preloadRemaining err', e));
+    });
 
-    // show start when critical at 100% (or when startReady flagged)
-    if (!startShown && state && state.startReady) {
-      startShown = true;
-      // if pct < 100 but startReady true (we flagged at >=50%), prefer show only when done or you can show earlier
-      // here show only when pct >= 100 to be safe for playing computer (per your request)
-      if (state.pct >= 100) {
-        criticalLoaded = true;
-        startButton.style.display = 'inline-block';
-        loadingText.textContent = 'พร้อมเริ่ม — แตะเพื่อเริ่ม AR';
-        bar.style.width = '100%';
-      }
-    }
+  } catch (e) {
+    console.warn('preloadCritical sync err', e);
+    // fallback: show start
+    showStartButton();
+    preloadRemaining().catch(e=>console.warn('preloadRemaining err', e));
+  }
 
-    if (state && state.done) {
-      criticalLoaded = true;
-      startButton.style.display = 'inline-block';
-      loadingText.textContent = 'พร้อมเริ่ม — แตะเพื่อเริ่ม AR';
-      bar.style.width = '100%';
-    }
-  }).catch(e => {
-    console.warn('preloadCritical failed', e);
-    // allow start anyway
-    startButton.style.display = 'inline-block';
-    loadingText.textContent = 'เตรียมทรัพยากรสำคัญ: เกิดข้อผิดพลาด — คุณยังคงสามารถเริ่มได้';
-  });
-
-  // startButton click
+  // show start button when user clicks (we added display in showStartButton)
   startButton.addEventListener('click', async () => {
-    // request video only
-    try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch(e) { console.warn('permission', e); }
+    // request only camera (no mic)
+    try { await navigator.mediaDevices.getUserMedia({ video:true }); } catch(e){ console.warn('permission', e); }
 
-    // hide loading UI and show container
     loadingScreen.style.display = 'none';
     container.style.display = 'block';
     if (scanFrame) scanFrame.style.display = 'flex';
 
-    // init AR (uses assets populated by preloadCritical)
+    // init AR
     await initAndStart(container);
 
-    // wire UI handlers
+    // wire UI
     initUI();
-
-    // silently start background preload of remaining assets
-    try { preloadRemaining().then(()=>{ console.log('background preload remaining finished'); }); } catch(e){ console.warn('preloadRemaining err', e); }
   }, { once: true });
 }
 

@@ -1,4 +1,4 @@
-// js/ar.js  (แก้แล้ว — ใส่ฟังก์ชัน createLights คืนเข้าไป)
+// js/ar.js
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -14,9 +14,8 @@ const candidates = {
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
-// store loaded asset blobURLs here (by career)
-const assets = {};
-const gameAssets = {}; // key: filename -> blobUrl
+const assets = {};      // assets[career] = { modelBlobUrl, videoBlobUrl }
+const gameAssets = {};  // game assets map
 
 // DOM helpers
 const scanFrame = () => document.getElementById('scan-frame');
@@ -58,16 +57,16 @@ export function setNoScan(flag) {
   }
 }
 
-/* ---------- DRACO setup ---------- */
+/* ---------- DRACO loader ---------- */
 let dracoLoader = null;
 function ensureDracoInitialized() {
   if (dracoLoader) return dracoLoader;
   dracoLoader = new DRACOLoader();
-  dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/'); // default CDN
+  dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
   return dracoLoader;
 }
 
-/* ---------- utility / AR helpers ---------- */
+/* ---------- helpers ---------- */
 const tmpObj = new THREE.Object3D();
 const tmpQuat = new THREE.Quaternion();
 const parentWorldQuat = new THREE.Quaternion();
@@ -102,54 +101,42 @@ function hideScanFrameThen(callback) {
   sf.style.opacity = '1';
   sf.offsetHeight;
   sf.style.opacity = '0';
-  const tid = setTimeout(() => {
+  setTimeout(() => {
     try {
       sf.style.display = 'none';
       sf.style.transition = '';
       sf.style.opacity = '1';
       Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    } catch (e) {}
-    clearTimeout(tid);
+    } catch(e){}
     if (callback) callback();
   }, 200);
 }
 
-/* simple concurrency runner */
+/* ---------- small concurrency runner ---------- */
 async function runQueue(tasks, concurrency = 4) {
   const results = new Array(tasks.length);
   let idx = 0;
   let running = 0;
   return new Promise((resolve) => {
     function next() {
-      if (idx >= tasks.length && running === 0) {
-        resolve(results);
-        return;
-      }
+      if (idx >= tasks.length && running === 0) { resolve(results); return; }
       while (running < concurrency && idx < tasks.length) {
         const i = idx++;
         running++;
-        tasks[i]().then(res => {
-          running--;
-          results[i] = { ok: true, value: res };
-          next();
-        }).catch(err => {
-          running--;
-          results[i] = { ok: false, err };
-          next();
-        });
+        tasks[i]().then(res => { running--; results[i] = { ok:true, value: res }; next(); })
+                 .catch(err => { running--; results[i] = { ok:false, err }; next(); });
       }
     }
     next();
   });
 }
 
-/* ---------- Fetch with progress (streams) ---------- */
+/* ---------- fetch with progress (streaming) ---------- */
 async function fetchWithProgress(url, onProgress = ()=>{}) {
   const resp = await fetch(encodeURI(url));
   if (!resp.ok) throw new Error(`fetch failed ${url} ${resp.status}`);
   const contentLength = resp.headers.get('Content-Length');
   if (!resp.body || !contentLength) {
-    // fallback: no streaming available or no content-length -> just blob
     const blob = await resp.blob();
     onProgress(100);
     return blob;
@@ -166,7 +153,6 @@ async function fetchWithProgress(url, onProgress = ()=>{}) {
     const pct = Math.round((received / total) * 100);
     onProgress(pct);
   }
-  // combine
   let size = 0;
   for (const c of chunks) size += c.length;
   const combined = new Uint8Array(size);
@@ -175,45 +161,43 @@ async function fetchWithProgress(url, onProgress = ()=>{}) {
   return new Blob([combined]);
 }
 
-/* ---------- Per-career ensure loaded (export) ---------- */
+/* ---------- ensureCareerLoaded (with career-load-progress dispatch) ---------- */
 export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
   if (!career || !careers.includes(career)) throw new Error('invalid career ' + career);
   const a = assets[career] || {};
   const alreadyModel = !!(a.modelBlobUrl);
   const alreadyVideo = !!(a.videoBlobUrl);
-
   if (alreadyModel && alreadyVideo) {
     onProgress(100);
     document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100 } }));
     return assets[career];
   }
 
-  const modelName = `${JOB_ROOT}/${career}/${candidates[career].model[0]}`;
-  const videoName = `${JOB_ROOT}/${career}/${candidates[career].video[0]}`;
+  const modelUrl = `${JOB_ROOT}/${career}/${candidates[career].model[0]}`;
+  const videoUrl = `${JOB_ROOT}/${career}/${candidates[career].video[0]}`;
 
   let modelPct = alreadyModel ? 100 : 0;
   let videoPct = alreadyVideo ? 100 : 0;
-
-  function emitCombined() {
+  function emit() {
     const combined = Math.round((modelPct + videoPct) / 2);
     onProgress(combined);
     document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: combined } }));
   }
-  emitCombined();
+  emit();
 
   const tasks = [];
   if (!alreadyModel) {
     tasks.push((async () => {
       try {
-        const blob = await fetchWithProgress(modelName, (p)=> { modelPct = p; emitCombined(); });
+        const blob = await fetchWithProgress(modelUrl, (p)=> { modelPct = p; emit(); });
         const url = URL.createObjectURL(blob);
         if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
         assets[career].modelBlobUrl = url;
-        modelPct = 100; emitCombined();
+        modelPct = 100; emit();
         return { ok:true };
       } catch(e) {
         console.warn('ensureCareerLoaded model err', career, e);
-        modelPct = 100; emitCombined();
+        modelPct = 100; emit();
         return { ok:false, err:e };
       }
     })());
@@ -221,22 +205,22 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
   if (!alreadyVideo) {
     tasks.push((async () => {
       try {
-        const blob = await fetchWithProgress(videoName, (p)=> { videoPct = p; emitCombined(); });
+        const blob = await fetchWithProgress(videoUrl, (p)=> { videoPct = p; emit(); });
         const url = URL.createObjectURL(blob);
         if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
         assets[career].videoBlobUrl = url;
-        videoPct = 100; emitCombined();
+        videoPct = 100; emit();
         return { ok:true };
       } catch(e) {
         console.warn('ensureCareerLoaded video err', career, e);
-        videoPct = 100; emitCombined();
+        videoPct = 100; emit();
         return { ok:false, err:e };
       }
     })());
   }
 
   await Promise.all(tasks);
-  emitCombined();
+  emit();
   return assets[career];
 }
 
@@ -245,19 +229,21 @@ export function isCareerReady(career) {
   return !!(a && a.modelBlobUrl && a.videoBlobUrl);
 }
 
-/* ---------- Preload: critical & remaining (existing logic) ---------- */
+/* ---------- preloadCritical: marker + Computer + secondCareer (fast) ---------- */
 export async function preloadCritical(onProgress = ()=>{}) {
+  // choose second career (first non-Computer)
   const secondCareer = careers.find(c=>c !== 'Computer') || 'AI';
-  const urls = [];
-  urls.push({ url: `${JOB_ROOT}/Computer/marker.mind`, phase:'marker' });
-  urls.push({ url: `${JOB_ROOT}/Computer/${candidates.Computer.model[0]}`, phase:'computer' });
-  urls.push({ url: `${JOB_ROOT}/Computer/${candidates.Computer.video[0]}`, phase:'computer' });
-  urls.push({ url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].model[0]}`, phase:'career' });
-  urls.push({ url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].video[0]}`, phase:'career' });
+  const toFetch = [
+    { url: `${JOB_ROOT}/Computer/marker.mind`, phase:'marker' },
+    { url: `${JOB_ROOT}/Computer/${candidates.Computer.model[0]}`, phase:'computer', career:'Computer', type:'model' },
+    { url: `${JOB_ROOT}/Computer/${candidates.Computer.video[0]}`, phase:'computer', career:'Computer', type:'video' },
+    { url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].model[0]}`, phase:'career', career:secondCareer, type:'model' },
+    { url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].video[0]}`, phase:'career', career:secondCareer, type:'video' },
+  ];
 
   const seen = new Set();
   const final = [];
-  for (const it of urls) {
+  for (const it of toFetch) {
     if (!it.url) continue;
     const u = it.url;
     if (!seen.has(u)) { seen.add(u); final.push(it); }
@@ -265,52 +251,56 @@ export async function preloadCritical(onProgress = ()=>{}) {
 
   const total = final.length;
   let doneCount = 0;
-  function report(u, phase, done) {
+  function report(u, phase, career, done) {
     if (done) doneCount = Math.min(total, doneCount + 1);
     const frac = total > 0 ? (doneCount / total) : 1;
     const pct = Math.round(frac * 100);
-    onProgress({ pct, doneCount, totalCount: total, url: u, phase, startReady: frac >= 1/2, done: doneCount >= total });
+    onProgress({ pct, doneCount, totalCount: total, url: u, phase, startReady: frac >= 0.5, done: doneCount >= total });
   }
 
   const tasks = final.map(item => async () => {
     const u = item.url;
-    const phase = item.phase;
     try {
       const res = await fetch(encodeURI(u));
       if (!res.ok) {
         console.warn('preloadCritical failed', u, res.status);
-        report(u, phase, true);
+        report(u, item.phase, item.career, true);
         return { url:u, ok:false, status: res.status };
       }
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
 
-      if (u.startsWith(`${JOB_ROOT}/`)) {
-        const parts = u.split('/');
-        const career = parts[2];
-        if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+      if (item.career) {
+        if (!assets[item.career]) assets[item.career] = { modelBlobUrl: null, videoBlobUrl: null };
         const low = u.toLowerCase();
-        if (low.endsWith('.glb') || low.endsWith('.gltf')) assets[career].modelBlobUrl = blobUrl;
-        else assets[career].videoBlobUrl = blobUrl;
+        if (low.endsWith('.glb') || low.endsWith('.gltf')) {
+          assets[item.career].modelBlobUrl = blobUrl;
+          // dispatch career progress (model loaded)
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: item.career, pct: 50 } }));
+        } else {
+          assets[item.career].videoBlobUrl = blobUrl;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: item.career, pct: 100 } }));
+        }
       } else {
         gameAssets[u] = blobUrl;
       }
 
-      report(u, phase, true);
+      report(u, item.phase, item.career, true);
       return { url:u, ok:true, blobUrl };
     } catch (err) {
       console.warn('preloadCritical error', u, err);
-      report(u, phase, true);
+      report(u, item.phase, item.career, true);
       return { url:u, ok:false, err };
     }
   });
 
   await runQueue(tasks, 6);
-  onProgress({ pct: 100, doneCount: total, totalCount: total, url: null, phase: 'critical-done', startReady: true, done:true });
+  onProgress({ pct:100, doneCount: total, totalCount: total, url: null, phase: 'critical-done', startReady:true, done:true });
   assets.gameAssets = gameAssets;
   return assets;
 }
 
+/* ---------- preloadRemaining (background) ---------- */
 export async function preloadRemaining() {
   const urls = [];
   for (const career of careers) {
@@ -368,8 +358,13 @@ export async function preloadRemaining() {
         const career = parts[2];
         if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
         const low = u.toLowerCase();
-        if (low.endsWith('.glb') || low.endsWith('.gltf')) assets[career].modelBlobUrl = blobUrl;
-        else assets[career].videoBlobUrl = blobUrl;
+        if (low.endsWith('.glb') || low.endsWith('.gltf')) {
+          assets[career].modelBlobUrl = blobUrl;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100 } }));
+        } else {
+          assets[career].videoBlobUrl = blobUrl;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100 } }));
+        }
       } else if (u.startsWith('game_assets/')) {
         const key = u.replace('game_assets/','');
         gameAssets[key] = blobUrl;
@@ -384,7 +379,7 @@ export async function preloadRemaining() {
   return runQueue(tasks, 4);
 }
 
-/* ---------- GLTF loading (uses DRACO) ---------- */
+/* ---------- GLTF loader (DRACO aware) ---------- */
 function loadGLTF(blobUrl) {
   return new Promise((resolve) => {
     if (!blobUrl) return resolve(null);
@@ -409,26 +404,21 @@ function makeVideoElem(blobUrl) {
   return v;
 }
 
-/* ---------- createLights (FIX: เพิ่มฟังก์ชันนี้กลับเข้าไป) ---------- */
+/* ---------- lights helper ---------- */
 function createLights(scene) {
   try {
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
     hemi.position.set(0, 1, 0);
     scene.add(hemi);
-
     const dir = new THREE.DirectionalLight(0xffffff, 0.8);
     dir.position.set(0.5, 1, 0.5);
     scene.add(dir);
-
-    // subtle ambient to avoid full black shadows on mobile
     const amb = new THREE.AmbientLight(0x202020, 0.6);
     scene.add(amb);
-  } catch (e) {
-    console.warn('createLights err', e);
-  }
+  } catch(e) { console.warn('createLights err', e); }
 }
 
-/* ---------- rest of file (attachContent, initAndStart, UI actions) ---------- */
+/* ---------- clear/attach content (same logic) ---------- */
 function clearAnchorContent(keep=false) {
   if (keep) {
     if (videoElem) { try { videoElem.pause(); } catch(e){} }
@@ -438,7 +428,6 @@ function clearAnchorContent(keep=false) {
     pausedByTrackingLoss = false;
     return;
   }
-
   if (mixer) { try { mixer.stopAllAction(); } catch(e){} mixer = null; }
   if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
   if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
@@ -479,7 +468,6 @@ function attachContentToAnchor(gltf, video) {
     videoMesh.visible = false;
     anchor.group.add(videoMesh);
     try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
-
     videoElem.onloadedmetadata = () => {
       try {
         const asp = videoElem.videoWidth / videoElem.videoHeight || (9/16);
@@ -488,7 +476,6 @@ function attachContentToAnchor(gltf, video) {
         videoMesh.geometry.dispose();
         videoMesh.geometry = new THREE.PlaneGeometry(width, height);
         videoMesh.position.set(0, 0, 0);
-
         if (gltfModel) {
           gltfModel.updateMatrixWorld(true);
           bbox.setFromObject(gltfModel);
@@ -504,7 +491,6 @@ function attachContentToAnchor(gltf, video) {
         }
       } catch(e){ console.warn('onloadedmetadata align err', e); }
     };
-
     videoElem.onended = () => {
       lastCareer = playingCareer;
       clearAnchorContent(false);
@@ -530,7 +516,6 @@ export async function initAndStart(containerElement) {
     filterBeta: 0.005
   });
   ({ renderer, scene, camera } = mindarThree);
-  // set color space properly (new three.js)
   try { renderer.outputColorSpace = THREE.SRGBColorSpace; } catch(e){}
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
@@ -603,12 +588,12 @@ export async function initAndStart(containerElement) {
         }
         anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
       }
-    } catch(e) { /* non-fatal */ }
+    } catch(e) {}
     renderer.render(scene, camera);
   });
 }
 
-/* ---------- UI actions (play/pause/reset) ---------- */
+/* ---------- UI actions ---------- */
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
@@ -649,7 +634,6 @@ export async function playCareer(career) {
     }, 1000);
     waitingForMarkerPlay = false;
   } else {
-    waitingForMarker = true;
     waitingForMarkerPlay = true;
   }
 }
