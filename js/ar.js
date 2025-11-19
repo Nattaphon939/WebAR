@@ -1,4 +1,4 @@
-// js/ar.js  (fast direct preload: no HEAD, no variant probe)
+// js/ar.js
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -15,7 +15,7 @@ const candidates = {
 
 // store loaded asset blobURLs here (by career)
 const assets = {};
-const gameAssets = {}; // store game blobs keyed by filename (e.g. "Computer.png")
+const gameAssets = {}; // key: filename -> blobUrl
 
 // DOM helpers
 const scanFrame = () => document.getElementById('scan-frame');
@@ -23,7 +23,6 @@ const careerMenu = () => document.getElementById('career-menu');
 const careerActions = () => document.getElementById('career-actions');
 const backBtn = () => document.getElementById('backBtn');
 
-// AR state
 let mindarThree, renderer, scene, camera;
 let anchor;
 let gltfModel = null;
@@ -67,13 +66,10 @@ const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
 
-/* ---- simple hideScanFrameThen (used by AR flow) ---- */
+/* small helper to hide scan frame then callback */
 function hideScanFrameThen(callback) {
   const sf = scanFrame();
-  if (!sf) {
-    if (callback) callback();
-    return;
-  }
+  if (!sf) { if (callback) callback(); return; }
   if (noScanMode) {
     sf.style.display = 'none';
     Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
@@ -91,10 +87,7 @@ function hideScanFrameThen(callback) {
     }
   } catch(e){}
   const curDisplay = window.getComputedStyle(sf).display;
-  if (curDisplay === 'none' || sf.style.display === 'none') {
-    if (callback) callback();
-    return;
-  }
+  if (curDisplay === 'none' || sf.style.display === 'none') { if (callback) callback(); return; }
   sf.style.transition = 'opacity 180ms ease';
   sf.style.opacity = '1';
   // trigger reflow
@@ -113,8 +106,8 @@ function hideScanFrameThen(callback) {
   }, 200);
 }
 
-/* ---- very simple concurrency runner ---- */
-async function runQueue(tasks, concurrency) {
+/* very small concurrency runner */
+async function runQueue(tasks, concurrency = 4) {
   const results = new Array(tasks.length);
   let idx = 0;
   let running = 0;
@@ -143,84 +136,157 @@ async function runQueue(tasks, concurrency) {
 }
 
 /**
- * preloadAll(onProgress)
- * - NO HEAD, NO CHECKS. Load directly.
- * - concurrency: default 6 (fast but not insane).
- * - onProgress receives { pct, doneCount, totalCount, url, phase, startReady, done }
+ * preloadCritical(onProgress)
+ * - NO HEAD. Direct fetch of minimal assets required to start playing Computer + one more career (first after Computer).
+ * - onProgress receives an object { pct, doneCount, totalCount, url, phase, startReady, done }
+ * - returns assets object (same shape as getAssets)
  */
-export async function preloadAll(onProgress = ()=>{}) {
-  // Build URL list (straight, no probing)
-  const groups = [
-    { name: 'marker', urls: [`${JOB_ROOT}/Computer/marker.mind`] },
-    { name: 'computer', urls: [] },
-    { name: 'careers', urls: [] },
-    { name: 'game', urls: [] }
-  ];
+export async function preloadCritical(onProgress = ()=>{}) {
+  // list of urls to load (marker + Computer model+video + secondCareer model+video)
+  const secondCareer = careers.find(c=>c !== 'Computer') || 'AI';
+  const urls = [];
 
-  // use first candidate filename (no checking)
-  groups[1].urls.push(`${JOB_ROOT}/Computer/${candidates.Computer.model[0]}`);
-  groups[1].urls.push(`${JOB_ROOT}/Computer/${candidates.Computer.video[0]}`);
+  // marker
+  urls.push({ url: `${JOB_ROOT}/Computer/marker.mind`, phase:'marker' });
 
-  for (const career of careers) {
-    if (career === 'Computer') continue;
-    groups[2].urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
-    groups[2].urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
+  // Computer model + video (take first candidate names)
+  urls.push({ url: `${JOB_ROOT}/Computer/${candidates.Computer.model[0]}`, phase:'computer' });
+  urls.push({ url: `${JOB_ROOT}/Computer/${candidates.Computer.video[0]}`, phase:'computer' });
+
+  // second career
+  urls.push({ url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].model[0]}`, phase:'career' });
+  urls.push({ url: `${JOB_ROOT}/${secondCareer}/${candidates[secondCareer].video[0]}`, phase:'career' });
+
+  // dedupe
+  const seen = new Set();
+  const final = [];
+  for (const it of urls) {
+    if (!it.url) continue;
+    const u = it.url;
+    if (!seen.has(u)) { seen.add(u); final.push(it); }
   }
 
-  // read manifest.json quickly (if exists) to include game assets (no probes)
+  const total = final.length;
+  let doneCount = 0;
+  function report(u, phase, done) {
+    if (done) doneCount = Math.min(total, doneCount + 1);
+    const frac = total > 0 ? (doneCount / total) : 1;
+    const pct = Math.round(frac * 100);
+    onProgress({ pct, doneCount, totalCount: total, url: u, phase, startReady: frac >= 1/2, done: doneCount >= total });
+  }
+
+  // create tasks
+  const tasks = final.map(item => async () => {
+    const u = item.url;
+    const phase = item.phase;
+    try {
+      const res = await fetch(encodeURI(u));
+      if (!res.ok) {
+        console.warn('preloadCritical failed', u, res.status);
+        report(u, phase, true);
+        return { url:u, ok:false, status: res.status };
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      // store mapping
+      if (u.startsWith(`${JOB_ROOT}/`)) {
+        const parts = u.split('/');
+        const career = parts[2];
+        if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+        const low = u.toLowerCase();
+        if (low.endsWith('.glb') || low.endsWith('.gltf')) assets[career].modelBlobUrl = blobUrl;
+        else assets[career].videoBlobUrl = blobUrl;
+      } else {
+        gameAssets[u] = blobUrl;
+      }
+
+      report(u, phase, true);
+      return { url:u, ok:true, blobUrl };
+    } catch (err) {
+      console.warn('preloadCritical error', u, err);
+      report(u, phase, true);
+      return { url:u, ok:false, err };
+    }
+  });
+
+  // concurrency tuned for GitHub + mobiles; you can increase if your host supports more
+  await runQueue(tasks, 6);
+
+  // final report
+  onProgress({ pct: 100, doneCount: total, totalCount: total, url: null, phase: 'critical-done', startReady: true, done:true });
+
+  // expose gameAssets
+  assets.gameAssets = gameAssets;
+  return assets;
+}
+
+/**
+ * preloadRemaining()
+ * - loads everything else in background (silent)
+ * - no progress reporting (silent)
+ */
+export async function preloadRemaining() {
+  // build list: all career model+video (take first candidate), plus game assets from manifest, plus sfx
+  const urls = [];
+
+  for (const career of careers) {
+    // if already loaded skip
+    if (!assets[career] || (!assets[career].modelBlobUrl || !assets[career].videoBlobUrl)) {
+      urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
+      urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
+    }
+  }
+
+  // try manifest quickly
   try {
     const mf = await fetch('game_assets/manifest.json');
     if (mf && mf.ok) {
       const manifest = await mf.json();
       for (const item of manifest) {
-        if (item.image) groups[3].urls.push(`game_assets/${item.image}`);
-        if (item.audioWord) groups[3].urls.push(`game_assets/${item.audioWord}`);
-        if (item.audioMeaning) groups[3].urls.push(`game_assets/${item.audioMeaning}`);
+        if (item.image) urls.push(`game_assets/${item.image}`);
+        if (item.audioWord) urls.push(`game_assets/${item.audioWord}`);
+        if (item.audioMeaning) urls.push(`game_assets/${item.audioMeaning}`);
       }
-      // also include sfx list (common)
-      const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
-      for (const f of sfx) groups[3].urls.push(`game_assets/sfx/${f}`);
     }
-  } catch(e){
-    // manifest not present or fetch failed -> skip game group
-  }
+  } catch(e){ /* ignore */ }
 
-  // flatten & dedupe preserving order
+  // common sfx
+  const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
+  for (const f of sfx) urls.push(`game_assets/sfx/${f}`);
+
+  // dedupe and remove already loaded (gameAssets)
+  const final = [];
   const seen = new Set();
-  const urls = [];
-  for (const g of groups) {
-    for (const u of g.urls) {
-      if (!u) continue;
-      if (!seen.has(u)) { seen.add(u); urls.push({ url: u, phase: g.name }); }
+  for (const u of urls) {
+    if (!u) continue;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    // if job asset and assets map already has blobUrl skip
+    if (u.startsWith(`${JOB_ROOT}/`)) {
+      const parts = u.split('/');
+      const career = parts[2];
+      const low = u.toLowerCase();
+      const isModel = low.endsWith('.glb') || low.endsWith('.gltf');
+      if (assets[career]) {
+        if (isModel && assets[career].modelBlobUrl) continue;
+        if (!isModel && assets[career].videoBlobUrl) continue;
+      }
+    } else if (u.startsWith('game_assets/')) {
+      const key = u.replace('game_assets/','');
+      if (gameAssets[key]) continue;
     }
+    final.push(u);
   }
 
-  const total = urls.length;
-  let doneCount = 0;
-  function report(url, phase) {
-    doneCount++;
-    const frac = total > 0 ? (doneCount / total) : 1;
-    const pct = Math.round(frac * 100);
-    onProgress({ pct, doneCount, totalCount: total, url, phase, startReady: frac >= 0.5, done: doneCount >= total });
-  }
-
-  // create tasks
-  const tasks = urls.map(item => async () => {
-    const u = item.url;
-    const phase = item.phase;
+  // silent load with concurrency small
+  const tasks = final.map(u => async () => {
     try {
       const r = await fetch(encodeURI(u));
-      if (!r.ok) {
-        console.warn('preload failed', u, r.status);
-        report(u, phase);
-        return { url: u, ok: false, status: r.status };
-      }
+      if (!r.ok) { console.warn('preloadRemaining failed', u, r.status); return; }
       const blob = await r.blob();
       const blobUrl = URL.createObjectURL(blob);
-
-      // store mapping
       if (u.startsWith(`${JOB_ROOT}/`)) {
-        // ./Job/CAREER/file
         const parts = u.split('/');
         const career = parts[2];
         if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
@@ -233,28 +299,17 @@ export async function preloadAll(onProgress = ()=>{}) {
       } else {
         gameAssets[u] = blobUrl;
       }
-
-      report(u, phase);
-      return { url: u, ok: true, blobUrl };
-    } catch (err) {
-      console.warn('preload error', u, err);
-      report(u, phase);
-      return { url: u, ok: false, err };
+    } catch(e) {
+      console.warn('preloadRemaining error', u, e);
     }
   });
 
-  const concurrency = 6; // tuned for speed; reduce if your server throttles
-  await runQueue(tasks, concurrency);
-
-  // final
-  onProgress({ pct: 100, doneCount: total, totalCount: total, url: null, phase: 'done', startReady: true, done: true });
-
-  // expose game assets on assets.gameAssets
-  assets.gameAssets = gameAssets;
-  return assets;
+  // run in background but don't await to block UI (we still want to return a promise so caller can optionally wait)
+  // return the promise so caller may ignore or await
+  return runQueue(tasks, 4);
 }
 
-/* ---- Remaining AR logic (unchanged) ---- */
+/* ---------- rest of AR logic (unchanged) ---------- */
 
 function createLights(scene) {
   const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
@@ -462,7 +517,6 @@ export async function initAndStart(containerElement) {
   });
 }
 
-// exported UI actions (unchanged)
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
@@ -560,3 +614,4 @@ export function resetToIdle() {
 }
 
 export function getAssets() { return assets; }
+export { preloadCritical, preloadRemaining };
