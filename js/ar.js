@@ -74,6 +74,8 @@ const bbox = new THREE.Box3();
 const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
+// NEW: small temp vector for alignObjectToCamera
+const tmpWorldVec = new THREE.Vector3();
 
 function hideScanFrameThen(callback) {
   const sf = scanFrame();
@@ -499,6 +501,41 @@ function attachContentToAnchor(gltf, video) {
   }
 }
 
+/* ============================================================
+   NEW helper: alignObjectToCamera
+   - makes an object face the camera (works when object has parent)
+   - obj: THREE.Object3D (e.g. gltfModel or videoMesh)
+   - smooth: 0..1 (1 = snap instantly, <1 = slerp smoothing)
+   ============================================================ */
+function alignObjectToCamera(obj, smooth = 1.0) {
+  if (!obj || !camera) return;
+  try {
+    // get object's world position
+    tmpWorldVec.copy(obj.getWorldPosition(tmpWorldVec));
+    tmpObj.position.copy(tmpWorldVec);
+    tmpObj.lookAt(camera.position);
+    tmpObj.updateMatrixWorld();
+    tmpObj.getWorldQuaternion(tmpQuat);
+
+    // convert world quaternion into target local quaternion (relative to object's parent)
+    if (obj.parent) {
+      obj.parent.getWorldQuaternion(parentWorldQuat);
+      parentWorldQuat.invert();
+      targetLocalQuat.copy(parentWorldQuat).multiply(tmpQuat);
+    } else {
+      targetLocalQuat.copy(tmpQuat);
+    }
+
+    if (smooth >= 0.999) {
+      obj.quaternion.copy(targetLocalQuat);
+    } else {
+      obj.quaternion.slerp(targetLocalQuat, smooth);
+    }
+  } catch (e) {
+    // fail-safe: ignore
+  }
+}
+
 /* init/start */
 export async function initAndStart(containerElement) {
   mindarThree = new MindARThree({
@@ -560,10 +597,13 @@ export async function initAndStart(containerElement) {
 
   await mindarThree.start();
 
+  // --- Updated animation loop: keep anchor smoothing, but force model & video to face camera ---
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
+
     try {
+      // original anchor smoothing (keeps anchor group oriented smoothly)
       if (anchor && anchor.group && camera) {
         tmpObj.position.copy(anchor.group.getWorldPosition(new THREE.Vector3()));
         tmpObj.lookAt(camera.position);
@@ -578,7 +618,15 @@ export async function initAndStart(containerElement) {
         }
         anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
       }
+
+      // Make GLTF model face the camera with a little smoothing (0.98)
+      alignObjectToCamera(gltfModel, 0.98);
+
+      // Make video plane face the camera instantly (snap)
+      alignObjectToCamera(videoMesh, 1.0);
+
     } catch(e){}
+
     renderer.render(scene, camera);
   });
 }
