@@ -20,6 +20,9 @@ const candidates = {
 const assets = {};      // per-career { modelBlobUrl, videoBlobUrl, markerBlobUrl }
 const gameAssets = {};  // manifest/images/audio/sfx (loaded last)
 
+// progress cache per career to keep bar monotonic
+const careerProgress = {};
+
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
 const careerActions = () => document.getElementById('career-actions');
@@ -79,6 +82,31 @@ const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
 const tmpWorldVec = new THREE.Vector3();
 
+/* small helper to dispatch career progress/events monotonic and only mark ready when both parts available */
+function dispatchCareerProgress(career, pctRaw = 0, file = null, type = null) {
+  if (!career) return;
+  if (!careerProgress[career]) careerProgress[career] = 0;
+  let pct = Math.round(pctRaw || 0);
+  pct = Math.max(0, Math.min(100, pct));
+
+  // If attempting to report 100% but assets missing, don't report full 100 until both model+video present
+  const a = assets[career] || {};
+  const hasBoth = !!(a.modelBlobUrl && a.videoBlobUrl);
+  if (pct >= 100 && !hasBoth) {
+    // map to at least 50 if one of them present, else keep previous
+    pct = Math.max(pct, (a.modelBlobUrl || a.videoBlobUrl) ? 50 : careerProgress[career]);
+  }
+
+  if (pct > careerProgress[career]) {
+    careerProgress[career] = pct;
+    document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct, file, type } }));
+    if (pct >= 100 && hasBoth) {
+      // mark ready event for UI
+      document.dispatchEvent(new CustomEvent('career-ready', { detail: { career } }));
+    }
+  }
+}
+
 /* hideScanFrameThen */
 function hideScanFrameThen(callback) {
   const sf = scanFrame();
@@ -123,7 +151,7 @@ async function fetchWithProgress(url, onProgress = ()=>{}) {
   const contentLength = resp.headers.get('Content-Length');
   if (!resp.body || !contentLength) {
     const blob = await resp.blob();
-    onProgress(100);
+    try { onProgress(100); } catch(e){}
     return blob;
   }
   const total = parseInt(contentLength, 10);
@@ -176,8 +204,8 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
   const alreadyMarker = !!(a.markerBlobUrl);
 
   if (alreadyModel && alreadyVideo) {
-    onProgress(100, null, null);
-    document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: null, type: 'all' } }));
+    try { onProgress(100, null, 'all'); } catch(e){}
+    dispatchCareerProgress(career, 100, null, 'all');
     return assets[career];
   }
 
@@ -194,7 +222,7 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
     if (assets[career][it.key]) {
       const pctOverall = Math.round(((i+1) / totalFiles) * 100);
       try { onProgress(pctOverall, it.url, it.type); } catch(e){}
-      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type } }));
+      dispatchCareerProgress(career, pctOverall, it.url, it.type);
       continue;
     }
     try {
@@ -202,18 +230,18 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
         const base = (i) / totalFiles * 100;
         const overall = Math.round(base + (p/totalFiles));
         try { onProgress(overall, it.url, it.type); } catch(e){}
-        document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: overall, file: it.url, type: it.type } }));
+        dispatchCareerProgress(career, overall, it.url, it.type);
       });
       const blobUrl = URL.createObjectURL(blob);
       assets[career][it.key] = blobUrl;
       const pctOverall = Math.round(((i+1) / totalFiles) * 100);
       try { onProgress(pctOverall, it.url, it.type); } catch(e){}
-      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type } }));
+      dispatchCareerProgress(career, pctOverall, it.url, it.type);
     } catch (e) {
       assets[career][it.key] = null;
       const pctOverall = Math.round(((i+1) / totalFiles) * 100);
       try { onProgress(pctOverall, it.url, it.type); } catch(e){}
-      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type, ok:false } }));
+      dispatchCareerProgress(career, pctOverall, it.url, it.type);
     }
   }
   return assets[career];
@@ -291,15 +319,21 @@ export async function preloadCritical(onProgress = ()=>{}) {
         if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
       }
       list.push('game_assets/sfx/flip.wav','game_assets/sfx/match.wav','game_assets/sfx/wrong.wav','game_assets/sfx/win.mp3');
-      await runQueue(list.map(u=> async () => {
+      // emit some game-load-progress events — UI can use this to enable game button
+      let done = 0;
+      for (const u of list) {
         try {
           const r = await fetch(encodeURI(u));
-          if (!r.ok) return;
-          const b = await r.blob();
-          const url = URL.createObjectURL(b);
-          gameAssets[u.replace('game_assets/','')] = url;
-        } catch(e) { /* ignore */ }
-      }), 6);
+          if (r && r.ok) {
+            const b = await r.blob();
+            const url = URL.createObjectURL(b);
+            gameAssets[u.replace('game_assets/','')] = url;
+          }
+        } catch(e){ }
+        done++;
+        const pct = Math.round((done / list.length) * 100);
+        document.dispatchEvent(new CustomEvent('game-load-progress', { detail: { pct } }));
+      }
     }
   } catch(e) {
     // ignore
@@ -326,7 +360,7 @@ export async function preloadRemaining() {
             const blobUrl = URL.createObjectURL(b);
             if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
             assets[career].modelBlobUrl = blobUrl;
-            document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: modelUrl, type:'model' } }));
+            dispatchCareerProgress(career, 100, modelUrl, 'model');
           }
         } catch(e){}
       }
@@ -338,7 +372,7 @@ export async function preloadRemaining() {
             const b2 = await r2.blob();
             const blobUrl2 = URL.createObjectURL(b2);
             assets[career].videoBlobUrl = blobUrl2;
-            document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: videoUrl, type:'video' } }));
+            dispatchCareerProgress(career, 100, videoUrl, 'video');
           }
         } catch(e){}
       }
@@ -420,6 +454,87 @@ function makeVideoLayer(videoMesh) {
   } catch(e){}
 }
 
+/* attach helpers: attach model/video individually so adding one doesn't remove the other */
+function attachModelToAnchor(gltf) {
+  try {
+    if (!gltf || !gltf.scene) return;
+    // remove old model if any
+    if (gltfModel && gltfModel.parent) {
+      try { gltfModel.parent.remove(gltfModel); } catch(e){}
+    }
+    gltfModel = gltf.scene;
+    gltfModel.scale.set(0.4,0.4,0.4);
+    // slightly in front
+    gltfModel.position.set(-0.25, -0.45, 0.02);
+    gltfModel.visible = false;
+    try { anchor.group.add(gltfModel); } catch(e){}
+    try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
+    makeModelRenderPriority(gltfModel);
+    if (gltf.animations && gltf.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(gltfModel);
+      gltf.animations.forEach(c => { const action = mixer.clipAction(c); action.play(); });
+      mixer.timeScale = 0;
+    }
+  } catch(e){}
+}
+function attachVideoToAnchor(video) {
+  try {
+    if (!video) return;
+    if (videoMesh && videoMesh.parent) {
+      try { videoMesh.parent.remove(videoMesh); } catch(e){}
+    }
+    if (videoElem) try { videoElem.pause(); } catch(e){}
+    videoElem = video;
+    const texture = new THREE.VideoTexture(videoElem);
+    try { texture.colorSpace = THREE.SRGBColorSpace; } catch(e){}
+    const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
+    const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+    videoMesh = new THREE.Mesh(plane, mat);
+    videoMesh.position.set(0, -0.05, -0.05);
+    videoMesh.visible = false;
+    try { anchor.group.add(videoMesh); } catch(e){}
+    try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
+    makeVideoLayer(videoMesh);
+
+    videoElem.onloadedmetadata = () => {
+      try {
+        const asp = (videoElem.videoWidth / videoElem.videoHeight) || (9/16);
+        const width = 0.6;
+        const height = width / asp;
+        videoMesh.geometry.dispose();
+        videoMesh.geometry = new THREE.PlaneGeometry(width, height);
+        videoMesh.position.set(0, 0, -0.05);
+        if (gltfModel) {
+          gltfModel.updateMatrixWorld(true);
+          bbox.setFromObject(gltfModel);
+          worldMin.copy(bbox.min);
+          anchor.group.worldToLocal(worldMin);
+          videoMesh.getWorldPosition(worldPos);
+          anchor.group.worldToLocal(worldPos);
+          const videoBottomLocalY = worldPos.y - (height / 2);
+          const deltaY = videoBottomLocalY - worldMin.y;
+          const UP_NUDGE = 0.03;
+          gltfModel.position.y += deltaY + UP_NUDGE;
+        }
+      } catch(e){}
+    };
+
+    videoElem.onended = () => {
+      lastCareer = playingCareer;
+      clearAnchorContent(false);
+      playingCareer = null;
+      isPausedByBack = false;
+      if (lastCareer && ['AI','Cloud','Data_Center','Network'].includes(lastCareer)) {
+        if (careerActions()) careerActions().style.display = 'flex';
+      }
+      if (careerMenu()) careerMenu().style.display = 'flex';
+      if (backBtn()) backBtn().style.display = 'none';
+      if (scanFrame()) scanFrame().style.display = 'none';
+    };
+
+  } catch(e){}
+}
+
 /* clear/attach */
 function clearAnchorContent(keep=false) {
   if (keep) {
@@ -438,84 +553,27 @@ function clearAnchorContent(keep=false) {
   pausedByTrackingLoss = false;
 }
 
-/* attachContentToAnchor - sets render order and initial z offsets */
+/* attachContentToAnchor - smart: if both provided, replace both; if only one provided, attach only that */
 function attachContentToAnchor(gltf, video) {
-  // remove previous if present (we will re-add)
-  if (gltfModel) try{ if (gltfModel.parent) gltfModel.parent.remove(gltfModel); }catch(e){} gltfModel = null;
-  if (videoMesh) try{ if (videoMesh.parent) videoMesh.parent.remove(videoMesh); }catch(e){} videoMesh = null;
-  if (videoElem) try{ videoElem.pause(); } catch(e){} videoElem = null;
-  mixer = null;
-
-  if (gltf && gltf.scene) {
-    gltfModel = gltf.scene;
-    gltfModel.scale.set(0.4,0.4,0.4);
-    // place model slightly in front (z positive)
-    gltfModel.position.set(-0.25, -0.45, 0.05); // increased z to ensure front
-    // default invisible initially — caller will set visible when appropriate
-    gltfModel.visible = false;
-    try { anchor.group.add(gltfModel); } catch(e){}
-    try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
-    makeModelRenderPriority(gltfModel);
-    if (gltf.animations && gltf.animations.length > 0) {
-      mixer = new THREE.AnimationMixer(gltfModel);
-      gltf.animations.forEach(c => { const action = mixer.clipAction(c); action.play(); });
-      mixer.timeScale = 0;
-    }
+  // if both provided -> replace both
+  if (gltf && video) {
+    // remove both and add new
+    try { if (gltfModel && gltfModel.parent) gltfModel.parent.remove(gltfModel); } catch(e){}
+    try { if (videoMesh && videoMesh.parent) videoMesh.parent.remove(videoMesh); } catch(e){}
+    gltfModel = null; videoMesh = null; videoElem = null; mixer = null;
+    attachModelToAnchor(gltf);
+    attachVideoToAnchor(video);
+    return;
   }
-
-  if (video) {
-    videoElem = video;
-    try { videoElem.pause(); } catch(e){}
-    const texture = new THREE.VideoTexture(videoElem);
-    try { texture.colorSpace = THREE.SRGBColorSpace; } catch(e){}
-    const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
-    const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
-    videoMesh = new THREE.Mesh(plane, mat);
-    // keep video slightly behind (z negative)
-    videoMesh.position.set(0, -0.05, -0.05); // moved back more
-    videoMesh.visible = false;
-    try { anchor.group.add(videoMesh); } catch(e){}
-    try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
-    makeVideoLayer(videoMesh);
-
-    // when metadata loaded, resize plane and nudge model up so bottom not overlap
-    videoElem.onloadedmetadata = () => {
-      try {
-        const asp = (videoElem.videoWidth / videoElem.videoHeight) || (9/16);
-        const width = 0.6;
-        const height = width / asp;
-        videoMesh.geometry.dispose();
-        videoMesh.geometry = new THREE.PlaneGeometry(width, height);
-        // ensure z offset behind model
-        videoMesh.position.set(0, 0, -0.05);
-        if (gltfModel) {
-          gltfModel.updateMatrixWorld(true);
-          bbox.setFromObject(gltfModel);
-          worldMin.copy(bbox.min);
-          anchor.group.worldToLocal(worldMin);
-          videoMesh.getWorldPosition(worldPos);
-          anchor.group.worldToLocal(worldPos);
-          const videoBottomLocalY = worldPos.y - (height / 2);
-          const deltaY = videoBottomLocalY - worldMin.y;
-          const UP_NUDGE = 0.03; // slightly larger to reduce overlaps
-          gltfModel.position.y += deltaY + UP_NUDGE;
-        }
-      } catch(e){}
-    };
-
-    videoElem.onended = () => {
-      lastCareer = playingCareer;
-      // stop playback and clear content (consistent UX)
-      clearAnchorContent(false);
-      playingCareer = null;
-      isPausedByBack = false;
-      if (lastCareer && ['AI','Cloud','Data_Center','Network'].includes(lastCareer)) {
-        if (careerActions()) careerActions().style.display = 'flex';
-      }
-      if (careerMenu()) careerMenu().style.display = 'flex';
-      if (backBtn()) backBtn().style.display = 'none';
-      if (scanFrame()) scanFrame().style.display = 'none';
-    };
+  // only model provided
+  if (gltf && !video) {
+    attachModelToAnchor(gltf);
+    return;
+  }
+  // only video provided
+  if (video && !gltf) {
+    attachVideoToAnchor(video);
+    return;
   }
 }
 
@@ -527,9 +585,7 @@ async function ensureContentForCareer(career) {
   if (!gltfModel && a.modelBlobUrl) {
     const g = await loadGLTF(a.modelBlobUrl);
     if (g) {
-      try { anchor.group.add(g.scene); } catch(e){}
-      attachContentToAnchor(g, null); // will re-add model (and preserve existing video if any)
-      // If anchor currently tracked, make model visible now
+      attachModelToAnchor(g);
       if (isAnchorTracked && gltfModel) {
         try { gltfModel.visible = true; if (mixer) mixer.timeScale = 1; } catch(e){}
       }
@@ -539,9 +595,7 @@ async function ensureContentForCareer(career) {
   if (!videoMesh && a.videoBlobUrl) {
     const v = makeVideoElem(a.videoBlobUrl);
     if (v) {
-      // if model is present, attach both properly
-      const dummyGltf = gltfModel ? { scene: gltfModel } : null;
-      attachContentToAnchor(dummyGltf, v);
+      attachVideoToAnchor(v);
       if (isAnchorTracked && videoElem) {
         try { videoMesh.visible = true; } catch(e){}
       }
