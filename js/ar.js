@@ -226,16 +226,28 @@ export function isCareerReady(career) {
 
 /* preloadCritical: phase ordering (Computer first, show progress only for Computer + first other career) */
 export async function preloadCritical(onProgress = ()=>{}) {
+  // wrap progress to make it monotonic (never decrease)
+  let lastMainPct = 0;
+  const safeOn = (obj) => {
+    try {
+      const raw = obj && typeof obj.pct === 'number' ? obj.pct : (obj && obj.overall) ? obj.overall : 0;
+      let pct = Math.max(0, Math.min(100, Math.round(raw)));
+      if (pct < lastMainPct) pct = lastMainPct;
+      lastMainPct = pct;
+      const out = Object.assign({}, obj, { pct });
+      try { onProgress(out); } catch(e){}
+    } catch(e){}
+  };
+
   try {
-    // start at 0
-    try { onProgress({ pct: 0, startReady: false }); } catch(e){}
+    safeOn({ phase:'phaseA-start', pct: 0, startReady:false });
     // 1) Computer first — map 0..100 -> 0..50 overall
     await ensureCareerLoaded('Computer', (pct, file, type) => {
       const overall = Math.round((pct * 0.5));
-      try { onProgress({ pct: overall, startReady: false }); } catch(e){}
+      safeOn({ phase:'phaseA-career', career:'Computer', pct: overall, file, type, startReady: false });
     });
   } catch(e) {
-    try { onProgress({ pct: 10, startReady: false }); } catch(e){}
+    safeOn({ phase:'phaseA-error', pct: 10, startReady:false });
   }
 
   // find next career used to show second half of the bar (first non-Computer)
@@ -245,31 +257,29 @@ export async function preloadCritical(onProgress = ()=>{}) {
     const career = order[ci];
     try {
       await ensureCareerLoaded(career, (pct, file, type) => {
-        // only update the main loading bar for the first OTHER career encountered
         if (!firstDisplayedOther) {
           const overall = 50 + Math.round(pct * 0.5); // 50..100
-          try { onProgress({ pct: overall, startReady: overall >= 100 }); } catch(e){}
+          safeOn({ phase:'phaseB-career', career, pct: overall, file, type, startReady: overall >= 100 });
         }
       });
       if (!firstDisplayedOther && isCareerReady(career)) {
         firstDisplayedOther = career;
       }
     } catch(e) {
-      // ignore per-career errors for progress bar; still continue loading others
+      // ignore per-career errors
     }
 
-    // after attempting each career, if Computer + at least one other is ready, signal startReady
     try {
       const compReady = isCareerReady('Computer');
       const startOk = compReady && !!firstDisplayedOther;
       if (startOk) {
-        try { onProgress({ pct: 100, startReady: true }); } catch(e){}
-        break; // we've satisfied start condition — still continue loading remaining careers quietly below
+        safeOn({ phase:'check-start', pct: 100, startReady: true });
+        break;
       }
     } catch(e){}
   }
 
-  // Phase C - game assets last (we don't update the main 0..100 bar per-file; just run quietly)
+  // Phase C - game assets last (quiet). Do not reduce main bar; just load quietly.
   try {
     const mfRes = await fetch(encodeURI('game_assets/manifest.json'));
     if (mfRes && mfRes.ok) {
@@ -297,80 +307,68 @@ export async function preloadCritical(onProgress = ()=>{}) {
 
   assets.gameAssets = gameAssets;
   // final ensure we send 100% to main loader if not already
-  try { onProgress({ pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) }); } catch(e){}
+  safeOn({ phase:'critical-done', pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) });
   return assets;
 }
 
-/* preloadRemaining (quiet) */
+/* preloadRemaining (now: load per-folder sequentially to reduce parallel load pressure) */
 export async function preloadRemaining() {
-  const urls = [];
   for (const career of careers) {
-    if (!assets[career] || (!assets[career].modelBlobUrl || !assets[career].videoBlobUrl)) {
-      urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
-      urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
-    }
+    try {
+      const a = assets[career] || {};
+      // load model then video (one folder at a time)
+      if (!a.modelBlobUrl) {
+        try {
+          const modelUrl = `${JOB_ROOT}/${career}/${candidates[career].model[0]}`;
+          const r = await fetch(encodeURI(modelUrl));
+          if (r && r.ok) {
+            const b = await r.blob();
+            const blobUrl = URL.createObjectURL(b);
+            if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+            assets[career].modelBlobUrl = blobUrl;
+            document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: modelUrl, type:'model' } }));
+          }
+        } catch(e){}
+      }
+      if (!assets[career].videoBlobUrl) {
+        try {
+          const videoUrl = `${JOB_ROOT}/${career}/${candidates[career].video[0]}`;
+          const r2 = await fetch(encodeURI(videoUrl));
+          if (r2 && r2.ok) {
+            const b2 = await r2.blob();
+            const blobUrl2 = URL.createObjectURL(b2);
+            assets[career].videoBlobUrl = blobUrl2;
+            document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: videoUrl, type:'video' } }));
+          }
+        } catch(e){}
+      }
+    } catch(e){}
   }
+
+  // then load remaining game assets quietly (parallel small concurrency)
   try {
     const mf = await fetch('game_assets/manifest.json');
     if (mf && mf.ok) {
       const manifest = await mf.json();
+      const list = [];
       for (const item of manifest) {
-        if (item.image) urls.push(`game_assets/cards/${item.image}`);
-        if (item.audioWord) urls.push(`game_assets/audio/${item.audioWord}`);
-        if (item.audioMeaning) urls.push(`game_assets/audio/${item.audioMeaning}`);
+        if (item.image) list.push(`game_assets/cards/${item.image}`);
+        if (item.audioWord) list.push(`game_assets/audio/${item.audioWord}`);
+        if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
+      }
+      const sfx = ['game_assets/sfx/flip.wav','game_assets/sfx/match.wav','game_assets/sfx/wrong.wav','game_assets/sfx/win.mp3'];
+      for (const u of [...list, ...sfx]) {
+        try {
+          const r = await fetch(encodeURI(u));
+          if (!r.ok) continue;
+          const b = await r.blob();
+          const url = URL.createObjectURL(b);
+          gameAssets[u.replace('game_assets/','')] = url;
+        } catch(e){}
       }
     }
   } catch(e){}
-  const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
-  for (const f of sfx) urls.push(`game_assets/sfx/${f}`);
-  const final = [];
-  const seen = new Set();
-  for (const u of urls) {
-    if (!u) continue;
-    if (seen.has(u)) continue;
-    seen.add(u);
-    if (u.startsWith(`${JOB_ROOT}/`)) {
-      const parts = u.split('/');
-      const career = parts[2];
-      const low = u.toLowerCase();
-      const isModel = low.endsWith('.glb') || low.endsWith('.gltf');
-      if (assets[career]) {
-        if (isModel && assets[career].modelBlobUrl) continue;
-        if (!isModel && assets[career].videoBlobUrl) continue;
-      }
-    } else if (u.startsWith('game_assets/')) {
-      const key = u.replace('game_assets/','');
-      if (gameAssets[key]) continue;
-    }
-    final.push(u);
-  }
-  const tasks = final.map(u => async () => {
-    try {
-      const r = await fetch(encodeURI(u));
-      if (!r.ok) { /* ignore missing files quietly */ return; }
-      const blob = await r.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      if (u.startsWith(`${JOB_ROOT}/`)) {
-        const parts = u.split('/');
-        const career = parts[2];
-        if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-        const low = u.toLowerCase();
-        if (low.endsWith('.glb') || low.endsWith('.gltf')) {
-          assets[career].modelBlobUrl = blobUrl;
-          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'model' } }));
-        } else {
-          assets[career].videoBlobUrl = blobUrl;
-          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'video' } }));
-        }
-      } else if (u.startsWith('game_assets/')) {
-        const key = u.replace('game_assets/','');
-        gameAssets[key] = blobUrl;
-      } else {
-        gameAssets[u] = blobUrl;
-      }
-    } catch(e) { }
-  });
-  return runQueue(tasks, 4);
+  return true;
 }
 
 /* loaders */
@@ -406,7 +404,6 @@ function makeModelRenderPriority(model) {
         if (node.material) {
           node.material.depthTest = true;
           node.material.depthWrite = true;
-          // keep original transparency if any
         }
       }
     });
@@ -453,7 +450,7 @@ function attachContentToAnchor(gltf, video) {
     gltfModel = gltf.scene;
     gltfModel.scale.set(0.4,0.4,0.4);
     // place model slightly in front (z positive)
-    gltfModel.position.set(-0.25, -0.45, 0.02);
+    gltfModel.position.set(-0.25, -0.45, 0.05); // increased z to ensure front
     // default invisible initially — caller will set visible when appropriate
     gltfModel.visible = false;
     try { anchor.group.add(gltfModel); } catch(e){}
@@ -470,13 +467,12 @@ function attachContentToAnchor(gltf, video) {
     videoElem = video;
     try { videoElem.pause(); } catch(e){}
     const texture = new THREE.VideoTexture(videoElem);
-    // sRGB if available
     try { texture.colorSpace = THREE.SRGBColorSpace; } catch(e){}
     const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
     const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
     videoMesh = new THREE.Mesh(plane, mat);
     // keep video slightly behind (z negative)
-    videoMesh.position.set(0, -0.05, -0.01);
+    videoMesh.position.set(0, -0.05, -0.05); // moved back more
     videoMesh.visible = false;
     try { anchor.group.add(videoMesh); } catch(e){}
     try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
@@ -491,7 +487,7 @@ function attachContentToAnchor(gltf, video) {
         videoMesh.geometry.dispose();
         videoMesh.geometry = new THREE.PlaneGeometry(width, height);
         // ensure z offset behind model
-        videoMesh.position.set(0, 0, -0.01);
+        videoMesh.position.set(0, 0, -0.05);
         if (gltfModel) {
           gltfModel.updateMatrixWorld(true);
           bbox.setFromObject(gltfModel);
@@ -648,11 +644,9 @@ export async function initAndStart(containerElement) {
         return;
       }
 
-      // if waiting for marker, start both model + video together
+      // always start both model + video when anchor found and waitingForMarkerPlay flag set (or video paused)
       const startNow = () => {
-        if (gltfModel) {
-          try { gltfModel.visible = true; } catch(e){}
-        }
+        if (gltfModel) try { gltfModel.visible = true; } catch(e){}
         if (mixer) try { mixer.timeScale = 1; } catch(e){}
         if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
       };
