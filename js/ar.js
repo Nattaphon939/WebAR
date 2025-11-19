@@ -14,10 +14,9 @@ const candidates = {
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
-const assets = {};      // assets[career] = { modelBlobUrl, videoBlobUrl }
-const gameAssets = {};  // game assets map
+const assets = {};
+const gameAssets = {};
 
-// DOM helpers
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
 const careerActions = () => document.getElementById('career-actions');
@@ -57,7 +56,7 @@ export function setNoScan(flag) {
   }
 }
 
-/* ---------- DRACO loader ---------- */
+/* DRACO setup */
 let dracoLoader = null;
 function ensureDracoInitialized() {
   if (dracoLoader) return dracoLoader;
@@ -66,7 +65,7 @@ function ensureDracoInitialized() {
   return dracoLoader;
 }
 
-/* ---------- helpers ---------- */
+/* helpers */
 const tmpObj = new THREE.Object3D();
 const tmpQuat = new THREE.Quaternion();
 const parentWorldQuat = new THREE.Quaternion();
@@ -107,12 +106,12 @@ function hideScanFrameThen(callback) {
       sf.style.transition = '';
       sf.style.opacity = '1';
       Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    } catch(e){}
+    } catch (e) {}
     if (callback) callback();
   }, 200);
 }
 
-/* ---------- small concurrency runner ---------- */
+/* small concurrency runner */
 async function runQueue(tasks, concurrency = 4) {
   const results = new Array(tasks.length);
   let idx = 0;
@@ -131,7 +130,7 @@ async function runQueue(tasks, concurrency = 4) {
   });
 }
 
-/* ---------- fetch with progress (streaming) ---------- */
+/* fetch with progress (streaming) */
 async function fetchWithProgress(url, onProgress = ()=>{}) {
   const resp = await fetch(encodeURI(url));
   if (!resp.ok) throw new Error(`fetch failed ${url} ${resp.status}`);
@@ -161,7 +160,7 @@ async function fetchWithProgress(url, onProgress = ()=>{}) {
   return new Blob([combined]);
 }
 
-/* ---------- ensureCareerLoaded (with career-load-progress dispatch) ---------- */
+/* ensureCareerLoaded */
 export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
   if (!career || !careers.includes(career)) throw new Error('invalid career ' + career);
   const a = assets[career] || {};
@@ -196,7 +195,7 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
         modelPct = 100; emit();
         return { ok:true };
       } catch(e) {
-        console.warn('ensureCareerLoaded model err', career, e);
+        // swallow but mark done
         modelPct = 100; emit();
         return { ok:false, err:e };
       }
@@ -212,7 +211,6 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
         videoPct = 100; emit();
         return { ok:true };
       } catch(e) {
-        console.warn('ensureCareerLoaded video err', career, e);
         videoPct = 100; emit();
         return { ok:false, err:e };
       }
@@ -229,9 +227,8 @@ export function isCareerReady(career) {
   return !!(a && a.modelBlobUrl && a.videoBlobUrl);
 }
 
-/* ---------- preloadCritical: marker + Computer + secondCareer (fast) ---------- */
+/* preloadCritical */
 export async function preloadCritical(onProgress = ()=>{}) {
-  // choose second career (first non-Computer)
   const secondCareer = careers.find(c=>c !== 'Computer') || 'AI';
   const toFetch = [
     { url: `${JOB_ROOT}/Computer/marker.mind`, phase:'marker' },
@@ -263,7 +260,6 @@ export async function preloadCritical(onProgress = ()=>{}) {
     try {
       const res = await fetch(encodeURI(u));
       if (!res.ok) {
-        console.warn('preloadCritical failed', u, res.status);
         report(u, item.phase, item.career, true);
         return { url:u, ok:false, status: res.status };
       }
@@ -275,7 +271,6 @@ export async function preloadCritical(onProgress = ()=>{}) {
         const low = u.toLowerCase();
         if (low.endsWith('.glb') || low.endsWith('.gltf')) {
           assets[item.career].modelBlobUrl = blobUrl;
-          // dispatch career progress (model loaded)
           document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: item.career, pct: 50 } }));
         } else {
           assets[item.career].videoBlobUrl = blobUrl;
@@ -288,7 +283,6 @@ export async function preloadCritical(onProgress = ()=>{}) {
       report(u, item.phase, item.career, true);
       return { url:u, ok:true, blobUrl };
     } catch (err) {
-      console.warn('preloadCritical error', u, err);
       report(u, item.phase, item.career, true);
       return { url:u, ok:false, err };
     }
@@ -300,7 +294,7 @@ export async function preloadCritical(onProgress = ()=>{}) {
   return assets;
 }
 
-/* ---------- preloadRemaining (background) ---------- */
+/* preloadRemaining (background) */
 export async function preloadRemaining() {
   const urls = [];
   for (const career of careers) {
@@ -350,7 +344,7 @@ export async function preloadRemaining() {
   const tasks = final.map(u => async () => {
     try {
       const r = await fetch(encodeURI(u));
-      if (!r.ok) { console.warn('preloadRemaining failed', u, r.status); return; }
+      if (!r.ok) { /* ignore missing files quietly */ return; }
       const blob = await r.blob();
       const blobUrl = URL.createObjectURL(blob);
       if (u.startsWith(`${JOB_ROOT}/`)) {
@@ -372,14 +366,14 @@ export async function preloadRemaining() {
         gameAssets[u] = blobUrl;
       }
     } catch(e) {
-      console.warn('preloadRemaining error', u, e);
+      /* swallow quietly */
     }
   });
 
   return runQueue(tasks, 4);
 }
 
-/* ---------- GLTF loader (DRACO aware) ---------- */
+/* GLTF loader (DRACO-aware) */
 function loadGLTF(blobUrl) {
   return new Promise((resolve) => {
     if (!blobUrl) return resolve(null);
@@ -387,8 +381,8 @@ function loadGLTF(blobUrl) {
     try {
       const dr = ensureDracoInitialized();
       loader.setDRACOLoader(dr);
-    } catch(e) { console.warn('draco init failed', e); }
-    loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
+    } catch(e) { /* continue */ }
+    loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ resolve(null); });
   });
 }
 
@@ -404,7 +398,7 @@ function makeVideoElem(blobUrl) {
   return v;
 }
 
-/* ---------- lights helper ---------- */
+/* lights */
 function createLights(scene) {
   try {
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
@@ -415,31 +409,31 @@ function createLights(scene) {
     scene.add(dir);
     const amb = new THREE.AmbientLight(0x202020, 0.6);
     scene.add(amb);
-  } catch(e) { console.warn('createLights err', e); }
+  } catch(e) {}
 }
 
-/* ---------- clear/attach content (same logic) ---------- */
+/* clear/attach */
 function clearAnchorContent(keep=false) {
   if (keep) {
-    if (videoElem) { try { videoElem.pause(); } catch(e){} }
-    if (mixer) { try { mixer.timeScale = 0; } catch(e){} }
+    if (videoElem) try { videoElem.pause(); } catch(e){}
+    if (mixer) try { mixer.timeScale = 0; } catch(e){}
     isPausedByBack = true;
     waitingForMarkerPlay = false;
     pausedByTrackingLoss = false;
     return;
   }
-  if (mixer) { try { mixer.stopAllAction(); } catch(e){} mixer = null; }
-  if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
-  if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
-  if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
+  if (mixer) try { mixer.stopAllAction(); } catch(e){} mixer = null;
+  if (gltfModel) try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null;
+  if (videoMesh) try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null;
+  if (videoElem) try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null;
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
 }
 
 function attachContentToAnchor(gltf, video) {
-  if (gltfModel) { try{ anchor.group.remove(gltfModel); } catch(e){} gltfModel = null; }
-  if (videoMesh) { try{ anchor.group.remove(videoMesh); } catch(e){} videoMesh = null; }
-  if (videoElem) { try{ videoElem.pause(); } catch(e){} videoElem = null; }
+  if (gltfModel) try{ anchor.group.remove(gltfModel); } catch(e){} gltfModel = null;
+  if (videoMesh) try{ anchor.group.remove(videoMesh); } catch(e){} videoMesh = null;
+  if (videoElem) try{ videoElem.pause(); } catch(e){} videoElem = null;
   mixer = null;
 
   if (gltf && gltf.scene) {
@@ -487,9 +481,8 @@ function attachContentToAnchor(gltf, video) {
           const deltaY = videoBottomLocalY - worldMin.y;
           const UP_NUDGE = 0.02;
           gltfModel.position.y += deltaY + UP_NUDGE;
-          try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); } catch(e){}
         }
-      } catch(e){ console.warn('onloadedmetadata align err', e); }
+      } catch(e){}
     };
     videoElem.onended = () => {
       lastCareer = playingCareer;
@@ -506,7 +499,7 @@ function attachContentToAnchor(gltf, video) {
   }
 }
 
-/* ---------- init + AR loop ---------- */
+/* init/start */
 export async function initAndStart(containerElement) {
   mindarThree = new MindARThree({
     container: containerElement,
@@ -520,7 +513,6 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
-  // initial attach (hidden + paused) - use preloaded assets if available
   const comp = assets['Computer'] || {};
   const g = await loadGLTF(comp.modelBlobUrl);
   const v = makeVideoElem(comp.videoBlobUrl);
@@ -544,9 +536,7 @@ export async function initAndStart(containerElement) {
       }
       const startNow = () => {
         if (mixer) try { mixer.timeScale = 1; } catch(e){}
-        if (videoElem) {
-          try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
-        }
+        if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
       };
       if (waitingForMarkerPlay || (videoElem && videoElem.paused && playingCareer)) {
         setTimeout(startNow, 1000);
@@ -588,13 +578,23 @@ export async function initAndStart(containerElement) {
         }
         anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
       }
-    } catch(e) {}
+    } catch(e){}
     renderer.render(scene, camera);
   });
 }
 
-/* ---------- UI actions ---------- */
+/* playCareer: now handles resume-if-paused and hide menu */
 export async function playCareer(career) {
+  // If this career already loaded & was paused by back -> resume immediately and close menu
+  if (playingCareer === career && isPausedByBack && videoElem) {
+    if (careerMenu()) careerMenu().style.display = 'none';
+    setNoScan(true);
+    isPausedByBack = false;
+    try { if (videoElem && videoElem.paused) videoElem.play(); } catch(e){}
+    if (mixer) try { mixer.timeScale = 1; } catch(e){}
+    return;
+  }
+
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
   if (career !== 'Computer') {
@@ -613,6 +613,7 @@ export async function playCareer(career) {
     pausedByTrackingLoss = false;
   }
 
+  // hide scan visuals immediately (we'll reveal once marker found)
   setNoScan(true);
 
   const a = assets[career] || {};
@@ -639,8 +640,8 @@ export async function playCareer(career) {
 }
 
 export function pauseAndShowMenu() {
-  if (videoElem) { try { videoElem.pause(); } catch(e){ console.warn(e); } }
-  if (mixer) { try { mixer.timeScale = 0; } catch(e){ console.warn(e); } }
+  if (videoElem) try { videoElem.pause(); } catch(e){}
+  if (mixer) try { mixer.timeScale = 0; } catch(e){}
   isPausedByBack = true;
   setAutoPlayEnabled(false);
   if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
@@ -654,13 +655,15 @@ export function pauseAndShowMenu() {
 export function returnToLast() {
   if (!lastCareer) return;
   setAutoPlayEnabled(true);
+  // If we were paused while playing lastCareer -> resume directly and hide menu (single click)
   if (playingCareer === lastCareer && isPausedByBack && videoElem) {
-    if (careerMenu()) careerMenu().style.display = 'flex';
+    if (careerMenu()) careerMenu().style.display = 'none';
     if (backBtn()) backBtn().style.display = 'inline-block';
     isPausedByBack = false;
-    try { if (gltfModel) gltfModel.visible = true; if (videoMesh) videoMesh.visible = true; videoElem.play(); } catch(e){ console.warn(e); }
+    try { if (gltfModel) gltfModel.visible = true; if (videoMesh) videoMesh.visible = true; if (videoElem && videoElem.paused) videoElem.play(); } catch(e){}
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
     if (lastCareer !== 'Computer' && careerActions()) careerActions().style.display = 'flex';
+    setNoScan(true);
     return;
   }
   playCareer(lastCareer);
@@ -680,7 +683,7 @@ export function removeCurrentAndShowMenu() {
 }
 
 export function resetToIdle() {
-  try { clearAnchorContent(false); } catch(e){ console.warn('resetToIdle clear err', e); }
+  try { clearAnchorContent(false); } catch(e){}
   playingCareer = null;
   lastCareer = null;
   isPausedByBack = false;
