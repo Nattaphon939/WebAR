@@ -1,5 +1,5 @@
 // js/main.js
-import { preloadCritical, preloadRemaining, initAndStart, getAssets } from './ar.js';
+import { preloadCritical, preloadRemaining, initAndStart, getAssets, ensureCareerLoaded } from './ar.js';
 import { initUI } from './ui.js';
 
 const bar = document.getElementById('bar');
@@ -19,6 +19,18 @@ function showStartButton() {
   bar.style.width = '100%';
 }
 
+/** Helper: ตรวจว่า Computer + อีก 1 career อย่างน้อยพร้อมทั้ง model+video */
+function canShowStartBasedOnAssets(assets) {
+  if (!assets || !assets.Computer) return false;
+  if (!assets.Computer.modelBlobUrl || !assets.Computer.videoBlobUrl) return false;
+  for (const k of Object.keys(assets)) {
+    if (k === 'Computer' || k === 'gameAssets') continue;
+    const a = assets[k];
+    if (a && a.modelBlobUrl && a.videoBlobUrl) return true;
+  }
+  return false;
+}
+
 async function main() {
   try {
     const criticalPromise = preloadCritical((info) => {
@@ -27,11 +39,14 @@ async function main() {
         bar.style.width = pct + '%';
         loadingText.textContent = `กำลังเตรียมทรัพยากร... ${pct}%`;
       } catch(e){}
+
       try {
         const assets = getAssets();
-        if (!startShown && assets && assets.Computer && assets.Computer.modelBlobUrl && assets.Computer.videoBlobUrl) {
+        // แสดงปุ่มเฉพาะเมื่อ Computer+another career พร้อม
+        if (!startShown && canShowStartBasedOnAssets(assets)) {
           showStartButton();
-        } else if (!startShown && info && info.startReady) {
+        } else if (!startShown && assets && assets.Computer && assets.Computer.modelBlobUrl && assets.Computer.videoBlobUrl && info && info.startReady) {
+          // fallback: ถ้า info.startReady มาเป็นสัญญาณก็ยังพิจารณา (แต่แรกพยายามให้ต้องมีอีก career ด้วย)
           showStartButton();
         }
       } catch(e){}
@@ -40,11 +55,16 @@ async function main() {
     criticalPromise.then(() => {
       try {
         const a = getAssets();
-        if (a && a.Computer && a.Computer.modelBlobUrl && a.Computer.videoBlobUrl) {
+        if (canShowStartBasedOnAssets(a)) {
           showStartButton();
-          loadingText.textContent = 'คอนเท้นต์ Computer พร้อม — แตะเพื่อเริ่ม';
+          loadingText.textContent = 'คอนเท้นต์พร้อม — แตะเพื่อเริ่ม';
+        } else if (a && a.Computer && a.Computer.modelBlobUrl && a.Computer.videoBlobUrl) {
+          // ถ้า Computer เต็มแต่ยังไม่มีอื่น ๆ แสดงข้อความเตรียม พร้อมแต่ไม่บังคับ
+          showStartButton();
+          loadingText.textContent = 'คอนเท้นต์ Computer พร้อม — กำลังเตรียมคอนเท้นต์อื่นๆ';
         }
       } catch(e){}
+
       // start background preloading (silent)
       preloadRemaining().catch(()=>{ /* ignore */ });
     }).catch(() => {
@@ -60,18 +80,27 @@ async function main() {
   startButton.addEventListener('click', async () => {
     startButton.disabled = true;
     try {
-      // ขอเฉพาะกล้อง (video) — ถ้ากล้องถูกใช้งาน จะจับข้อผิดพลาดแล้วให้ผู้ใช้แก้ไข
+      // ขอเฉพาะกล้อง (video)
       await navigator.mediaDevices.getUserMedia({ video:true });
     } catch(e) {
       console.warn('permission', e);
-      // user-friendly handling for device busy (NotReadableError / TrackStartError)
       if (e && (e.name === 'NotReadableError' || e.name === 'TrackStartError' || e.name === 'NotAllowedError')) {
         alert('ไม่สามารถเข้าถึงกล้องได้ (อาจถูกใช้งานโดยแอปอื่น หรือถูกบล็อก)\nโปรดปิดแอปอื่นที่ใช้กล้องแล้วลองอีกครั้ง');
         startButton.disabled = false;
         startButton.style.display = 'inline-block';
         return;
       }
-      // ถ้าข้อผิดพลาดอื่น ๆ ให้พยายามต่อ (best-effort)
+    }
+
+    // *** เพิ่มการรับประกัน: ถ้า Computer ยังไม่ดาวน์โหลดครบ (model+video) ให้รอโหลดให้ครบก่อน ***
+    try {
+      await ensureCareerLoaded('Computer', (pct) => {
+        // อัปเดต progress บางส่วนบน loading UI (ถ้าต้องการ)
+        try { bar.style.width = pct + '%'; loadingText.textContent = `กำลังเตรียมคอนเท้นต์ Computer... ${pct}%`; } catch(e){}
+      });
+    } catch(e){
+      console.warn('ensureCareerLoaded fallback failed', e);
+      // best-effort — ถ้า fail ก็จะพยายามเริ่ม (เดิม)
     }
 
     loadingScreen.style.display = 'none';
@@ -84,7 +113,6 @@ async function main() {
     } catch (e) {
       console.error('initAndStart failed', e);
       alert('ไม่สามารถเริ่ม AR ได้ โปรดตรวจสอบสิทธิ์กล้อง/เชื่อมต่อแล้วลองอีกครั้ง');
-      // คืนปุ่มเริ่มให้ผู้ใช้ลองใหม่
       loadingScreen.style.display = 'block';
       container.style.display = 'none';
       startButton.disabled = false;
