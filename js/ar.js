@@ -1,4 +1,4 @@
-// js/ar.js
+// js/ar.js  (แก้แล้ว — ใส่ฟังก์ชัน createLights คืนเข้าไป)
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -176,15 +176,8 @@ async function fetchWithProgress(url, onProgress = ()=>{}) {
 }
 
 /* ---------- Per-career ensure loaded (export) ---------- */
-/**
- * ensureCareerLoaded(career, onProgress) -> Promise
- * - loads model + video for career if not already loaded
- * - onProgress called with pct 0..100 (combined average of model+video)
- * - dispatches document event 'career-load-progress' with detail {career, pct}
- */
 export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
   if (!career || !careers.includes(career)) throw new Error('invalid career ' + career);
-  // if already present and both blobUrls exist -> done
   const a = assets[career] || {};
   const alreadyModel = !!(a.modelBlobUrl);
   const alreadyVideo = !!(a.videoBlobUrl);
@@ -195,7 +188,6 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
     return assets[career];
   }
 
-  // choose file names (first candidate)
   const modelName = `${JOB_ROOT}/${career}/${candidates[career].model[0]}`;
   const videoName = `${JOB_ROOT}/${career}/${candidates[career].video[0]}`;
 
@@ -209,7 +201,6 @@ export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
   }
   emitCombined();
 
-  // tasks
   const tasks = [];
   if (!alreadyModel) {
     tasks.push((async () => {
@@ -418,6 +409,26 @@ function makeVideoElem(blobUrl) {
   return v;
 }
 
+/* ---------- createLights (FIX: เพิ่มฟังก์ชันนี้กลับเข้าไป) ---------- */
+function createLights(scene) {
+  try {
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
+    hemi.position.set(0, 1, 0);
+    scene.add(hemi);
+
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(0.5, 1, 0.5);
+    scene.add(dir);
+
+    // subtle ambient to avoid full black shadows on mobile
+    const amb = new THREE.AmbientLight(0x202020, 0.6);
+    scene.add(amb);
+  } catch (e) {
+    console.warn('createLights err', e);
+  }
+}
+
+/* ---------- rest of file (attachContent, initAndStart, UI actions) ---------- */
 function clearAnchorContent(keep=false) {
   if (keep) {
     if (videoElem) { try { videoElem.pause(); } catch(e){} }
@@ -519,7 +530,8 @@ export async function initAndStart(containerElement) {
     filterBeta: 0.005
   });
   ({ renderer, scene, camera } = mindarThree);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // set color space properly (new three.js)
+  try { renderer.outputColorSpace = THREE.SRGBColorSpace; } catch(e){}
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
@@ -637,6 +649,7 @@ export async function playCareer(career) {
     }, 1000);
     waitingForMarkerPlay = false;
   } else {
+    waitingForMarker = true;
     waitingForMarkerPlay = true;
   }
 }
@@ -694,4 +707,3 @@ export function resetToIdle() {
 }
 
 export function getAssets() { return assets; }
-export { preloadCritical, preloadRemaining, ensureCareerLoaded, isCareerReady };
