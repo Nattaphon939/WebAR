@@ -1,4 +1,4 @@
-// js/ar.js
+// js/ar.js  (fixed: removed duplicate export)
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -614,4 +614,3 @@ export function resetToIdle() {
 }
 
 export function getAssets() { return assets; }
-export { preloadCritical, preloadRemaining };
