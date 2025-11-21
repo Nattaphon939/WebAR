@@ -1,7 +1,5 @@
-// js/ar.js  (patched)
-// Purpose: keep existing behavior but fix: 1) only load existing sfx (win.mp3) to avoid 404s
-// 2) ensure hideScanFrameThen is defined in scope before usage (fix ReferenceError)
-// 3) avoid using removed renderer.outputEncoding (use outputColorSpace)
+// js/ar.js
+// (updated) Adds small state-machine, synchronised playback starter, and userData.sourceCareer marking
 
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
@@ -18,11 +16,8 @@ const candidates = {
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
-// NOTE: you said sfx only has win.mp3 -> keep only that to avoid 404s
-const KNOWN_SFX = ['win.mp3'];
-
 const assets = {};      // per-career { modelBlobUrl, videoBlobUrl, markerBlobUrl }
-const gameAssets = {};  // manifest/images/audio/sfx (loaded last)
+const gameAssets = {};
 
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
@@ -40,13 +35,37 @@ let playingCareer = null;
 let lastCareer = null;
 let isPausedByBack = false;
 
+// state machine
+export const STATE = {
+  IDLE: 'idle',
+  LOADING: 'loading',
+  READY: 'ready',
+  PLAYING: 'playing',
+  PAUSED: 'paused',
+  WAITING: 'waiting'
+};
+let state = STATE.IDLE;
+export function getState() { return state; }
+function setState(s) {
+  state = s;
+  try { document.dispatchEvent(new CustomEvent('ar-state-change', { detail: { state } })); } catch(e){}
+}
+
+// control whether AR should auto-play content when target found (false when game/menu overlay open)
 let autoPlayEnabled = true;
 export function setAutoPlayEnabled(flag) { autoPlayEnabled = !!flag; }
 
+// flags for tracking/play state
 let isAnchorTracked = false;
-let waitingForMarkerPlay = false;
+let waitingForMarkerPlay = false; // user asked to play but marker not yet found
 let pausedByTrackingLoss = false;
+let wasPlayingBeforeLost = false; // remember to resume
 
+// video/model ready flags for synchronized start
+let videoReady = false;
+let modelReady = false;
+
+// control to hide scan visuals when menu up
 let noScanMode = false;
 export function setNoScan(flag) {
   noScanMode = !!flag;
@@ -72,7 +91,7 @@ function ensureDracoInitialized() {
   return dracoLoader;
 }
 
-/* temps */
+/* temps & consts */
 const tmpObj = new THREE.Object3D();
 const tmpQuat = new THREE.Quaternion();
 const parentWorldQuat = new THREE.Quaternion();
@@ -81,9 +100,8 @@ const bbox = new THREE.Box3();
 const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
-const tmpWorldVec = new THREE.Vector3();
 
-/* hideScanFrameThen - function declaration (ensure available before usage) */
+/* hideScanFrameThen (kept) */
 function hideScanFrameThen(callback) {
   const sf = scanFrame();
   if (!sf) { if (callback) callback(); return; }
@@ -120,7 +138,7 @@ function hideScanFrameThen(callback) {
   }, 200);
 }
 
-/* fetchWithProgress (streaming) */
+/* fetchWithProgress (unchanged) */
 async function fetchWithProgress(url, onProgress = ()=>{}) {
   const resp = await fetch(encodeURI(url));
   if (!resp.ok) throw new Error(`fetch failed ${url} ${resp.status}`);
@@ -150,7 +168,7 @@ async function fetchWithProgress(url, onProgress = ()=>{}) {
   return new Blob([combined]);
 }
 
-/* runQueue */
+/* runQueue (unchanged) */
 async function runQueue(tasks, concurrency = 4) {
   const results = new Array(tasks.length);
   let idx = 0;
@@ -169,7 +187,7 @@ async function runQueue(tasks, concurrency = 4) {
   });
 }
 
-/* ensureCareerLoaded (sequential per career folder) */
+/* ensureCareerLoaded (sequential per-folder) - unchanged semantics but emits career-load-progress */
 export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
   if (!career || !careers.includes(career)) throw new Error('invalid career ' + career);
   if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null, markerBlobUrl: null };
@@ -227,33 +245,18 @@ export function isCareerReady(career) {
   return !!(a && a.modelBlobUrl && a.videoBlobUrl);
 }
 
-/* preloadCritical: phase ordering (Computer first, show progress only for Computer + first other career) */
+/* preloadCritical: unchanged flow but uses monotonic progress via ui wrapper (main.js handles) */
 export async function preloadCritical(onProgress = ()=>{}) {
-  // wrap progress to make it monotonic (never decrease)
-  let lastMainPct = 0;
-  const safeOn = (obj) => {
-    try {
-      const raw = obj && typeof obj.pct === 'number' ? obj.pct : (obj && obj.overall) ? obj.overall : 0;
-      let pct = Math.max(0, Math.min(100, Math.round(raw)));
-      if (pct < lastMainPct) pct = lastMainPct;
-      lastMainPct = pct;
-      const out = Object.assign({}, obj, { pct });
-      try { onProgress(out); } catch(e){}
-    } catch(e){}
-  };
-
+  setState(STATE.LOADING);
   try {
-    safeOn({ phase:'phaseA-start', pct: 0, startReady:false });
-    // 1) Computer first — map 0..100 -> 0..50 overall
+    onProgress({ phase:'phaseA-start', pct: 0 });
     await ensureCareerLoaded('Computer', (pct, file, type) => {
-      const overall = Math.round((pct * 0.5));
-      safeOn({ phase:'phaseA-career', career:'Computer', pct: overall, file, type, startReady: false });
+      onProgress({ phase:'phaseA-career', career:'Computer', pct, file, type, startReady:false });
     });
   } catch(e) {
-    safeOn({ phase:'phaseA-error', pct: 10, startReady:false });
+    onProgress({ phase:'phaseA-error', pct: 10 });
   }
 
-  // find next career used to show second half of the bar (first non-Computer)
   const order = [...careers].filter(c => c !== 'Computer');
   let firstDisplayedOther = null;
   for (let ci=0; ci<order.length; ci++) {
@@ -261,28 +264,26 @@ export async function preloadCritical(onProgress = ()=>{}) {
     try {
       await ensureCareerLoaded(career, (pct, file, type) => {
         if (!firstDisplayedOther) {
-          const overall = 50 + Math.round(pct * 0.5); // 50..100
-          safeOn({ phase:'phaseB-career', career, pct: overall, file, type, startReady: overall >= 100 });
+          const overall = 50 + Math.round(pct * 0.5);
+          onProgress({ phase:'phaseB-career', career, pct: overall, file, type, startReady: overall >= 100 });
         }
       });
       if (!firstDisplayedOther && isCareerReady(career)) {
         firstDisplayedOther = career;
       }
-    } catch(e) {
-      // ignore per-career errors
-    }
+    } catch(e) {}
 
     try {
       const compReady = isCareerReady('Computer');
       const startOk = compReady && !!firstDisplayedOther;
       if (startOk) {
-        safeOn({ phase:'check-start', pct: 100, startReady: true });
+        onProgress({ phase:'check-start', pct: 100, startReady: true });
         break;
       }
     } catch(e){}
   }
 
-  // Phase C - game assets last (quiet). Do not reduce main bar; just load quietly.
+  // quiet game assets load
   try {
     const mfRes = await fetch(encodeURI('game_assets/manifest.json'));
     if (mfRes && mfRes.ok) {
@@ -293,8 +294,7 @@ export async function preloadCritical(onProgress = ()=>{}) {
         if (item.audioWord) list.push(`game_assets/audio/${item.audioWord}`);
         if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
       }
-      // Only include sfx that exist in your repo (you said only win.mp3)
-      for (const s of KNOWN_SFX) list.push(`game_assets/sfx/${s}`);
+      list.push('game_assets/sfx/win.mp3');
       await runQueue(list.map(u=> async () => {
         try {
           const r = await fetch(encodeURI(u));
@@ -302,25 +302,22 @@ export async function preloadCritical(onProgress = ()=>{}) {
           const b = await r.blob();
           const url = URL.createObjectURL(b);
           gameAssets[u.replace('game_assets/','')] = url;
-        } catch(e) { /* ignore */ }
+        } catch(e) {}
       }), 6);
     }
-  } catch(e) {
-    // ignore
-  }
+  } catch(e) {}
 
   assets.gameAssets = gameAssets;
-  // final ensure we send 100% to main loader if not already
-  safeOn({ phase:'critical-done', pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) });
+  setState(STATE.READY);
+  onProgress({ phase:'critical-done', pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) });
   return assets;
 }
 
-/* preloadRemaining (now: load per-folder sequentially to reduce parallel load pressure) */
+/* preloadRemaining: keep sequential per-folder */
 export async function preloadRemaining() {
   for (const career of careers) {
     try {
       const a = assets[career] || {};
-      // load model then video (one folder at a time)
       if (!a.modelBlobUrl) {
         try {
           const modelUrl = `${JOB_ROOT}/${career}/${candidates[career].model[0]}`;
@@ -349,7 +346,7 @@ export async function preloadRemaining() {
     } catch(e){}
   }
 
-  // then load remaining game assets quietly (only known sfx to avoid 404 spam)
+  // then load remaining game assets quietly
   try {
     const mf = await fetch('game_assets/manifest.json');
     if (mf && mf.ok) {
@@ -360,8 +357,8 @@ export async function preloadRemaining() {
         if (item.audioWord) list.push(`game_assets/audio/${item.audioWord}`);
         if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
       }
-      for (const s of KNOWN_SFX) list.push(`game_assets/sfx/${s}`);
-      for (const u of list) {
+      const sfx = ['game_assets/sfx/win.mp3'];
+      for (const u of [...list, ...sfx]) {
         try {
           const r = await fetch(encodeURI(u));
           if (!r.ok) continue;
@@ -399,7 +396,7 @@ function makeVideoElem(blobUrl) {
   return v;
 }
 
-/* material/render order helpers */
+/* render order helpers */
 function makeModelRenderPriority(model) {
   try {
     model.traverse(node => {
@@ -418,13 +415,35 @@ function makeVideoLayer(videoMesh) {
     if (!videoMesh) return;
     videoMesh.renderOrder = 1;
     if (videoMesh.material) {
-      videoMesh.material.depthWrite = false; // avoid occluding the model
+      videoMesh.material.depthWrite = false;
       videoMesh.material.depthTest = true;
     }
   } catch(e){}
 }
 
-/* clear/attach */
+/* helper: try to start both model animation + video together when both ready and anchor tracked */
+function startBothPlaybackIfReady(forceStart=false) {
+  // only start if anchor is tracked and autoplay allowed
+  if (!isAnchorTracked || !autoPlayEnabled) return false;
+  // if forceStart, allow starting even if videoReady false (useful when browser doesn't fire canplay quickly)
+  const canStartVideo = videoReady || forceStart;
+  const canStartModel = (gltfModel !== null) || !mixer;
+  if (canStartVideo && canStartModel) {
+    try { if (gltfModel) { gltfModel.visible = true; } } catch(e){}
+    try { if (mixer) mixer.timeScale = 1; } catch(e){}
+    if (videoElem) {
+      try { videoElem.currentTime = 0; if (videoElem.paused) videoElem.play(); } catch(e){}
+    }
+    waitingForMarkerPlay = false;
+    pausedByTrackingLoss = false;
+    wasPlayingBeforeLost = true;
+    setState(STATE.PLAYING);
+    return true;
+  }
+  return false;
+}
+
+/* clear/attach helpers */
 function clearAnchorContent(keep=false) {
   if (keep) {
     if (videoElem) try { videoElem.pause(); } catch(e){}
@@ -432,26 +451,31 @@ function clearAnchorContent(keep=false) {
     isPausedByBack = true;
     waitingForMarkerPlay = false;
     pausedByTrackingLoss = false;
+    setState(STATE.PAUSED);
     return;
   }
   if (mixer) try { mixer.stopAllAction(); } catch(e){} mixer = null;
   if (gltfModel) try{ if (gltfModel.parent) gltfModel.parent.remove(gltfModel); }catch{} gltfModel = null;
   if (videoMesh) try{ if (videoMesh.parent) videoMesh.parent.remove(videoMesh); }catch{} videoMesh = null;
   if (videoElem) try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null;
+  videoReady = false; modelReady = false;
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
+  setState(STATE.IDLE);
 }
 
-/* attachContentToAnchor - sets render order and initial z offsets */
 function attachContentToAnchor(gltf, video) {
-  // remove previous if present (we will re-add)
+  // remove previous displayed nodes (we keep blobs in `assets` so they are reusable)
   if (gltfModel) try{ if (gltfModel.parent) gltfModel.parent.remove(gltfModel); }catch(e){} gltfModel = null;
   if (videoMesh) try{ if (videoMesh.parent) videoMesh.parent.remove(videoMesh); }catch(e){} videoMesh = null;
   if (videoElem) try{ videoElem.pause(); } catch(e){} videoElem = null;
   mixer = null;
+  videoReady = false; modelReady = false;
 
   if (gltf && gltf.scene) {
     gltfModel = gltf.scene;
+    // mark source career for debugging
+    try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer; } catch(e){}
     gltfModel.scale.set(0.4,0.4,0.4);
     // place model slightly in front (z positive)
     gltfModel.position.set(-0.25, -0.45, 0.02);
@@ -459,10 +483,11 @@ function attachContentToAnchor(gltf, video) {
     try { anchor.group.add(gltfModel); } catch(e){}
     try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
     makeModelRenderPriority(gltfModel);
+    modelReady = true;
     if (gltf.animations && gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(gltfModel);
       gltf.animations.forEach(c => { const action = mixer.clipAction(c); action.play(); });
-      mixer.timeScale = 0;
+      mixer.timeScale = 0; // start paused
     }
   }
 
@@ -474,12 +499,15 @@ function attachContentToAnchor(gltf, video) {
     const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
     const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
     videoMesh = new THREE.Mesh(plane, mat);
-    // keep video slightly behind (z negative)
+    // keep video slightly behind
     videoMesh.position.set(0, -0.05, -0.01);
     videoMesh.visible = false;
     try { anchor.group.add(videoMesh); } catch(e){}
     try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
     makeVideoLayer(videoMesh);
+
+    // mark source career for debugging
+    try { videoMesh.userData = videoMesh.userData || {}; videoMesh.userData.sourceCareer = playingCareer; } catch(e){}
 
     // when metadata loaded, resize plane and nudge model up so bottom not overlap
     videoElem.onloadedmetadata = () => {
@@ -500,15 +528,29 @@ function attachContentToAnchor(gltf, video) {
           anchor.group.worldToLocal(worldPos);
           const videoBottomLocalY = worldPos.y - (height / 2);
           const deltaY = videoBottomLocalY - worldMin.y;
-          const UP_NUDGE = 0.03; // slightly larger to reduce overlaps
+          const UP_NUDGE = 0.03;
           gltfModel.position.y += deltaY + UP_NUDGE;
         }
       } catch(e){}
     };
 
+    // when canplay, mark ready and try starting both
+    videoElem.oncanplay = () => {
+      videoReady = true;
+      // if anchor is currently tracked and user waiting, attempt to start both
+      if (isAnchorTracked && waitingForMarkerPlay) startBothPlaybackIfReady(true);
+    };
+
+    // fallback: if metadata never fires, allow force start after timeout
+    setTimeout(() => {
+      if (!videoReady) {
+        videoReady = true; // allow start anyway after timeout
+        if (isAnchorTracked && waitingForMarkerPlay) startBothPlaybackIfReady(true);
+      }
+    }, 2500);
+
     videoElem.onended = () => {
       lastCareer = playingCareer;
-      // stop playback and clear content (consistent UX)
       clearAnchorContent(false);
       playingCareer = null;
       isPausedByBack = false;
@@ -522,37 +564,24 @@ function attachContentToAnchor(gltf, video) {
   }
 }
 
-/* Ensure content exist for the current career: if missing, load from assets and attach */
+/* ensureContentForCareer: attach from assets if exist (used when pressing career before marker found) */
 async function ensureContentForCareer(career) {
   if (!career) return;
   const a = assets[career] || {};
-  // load model if missing
+  let loadedG = null;
+  let v = null;
   if (!gltfModel && a.modelBlobUrl) {
-    const g = await loadGLTF(a.modelBlobUrl);
-    if (g) {
-      try { anchor.group.add(g.scene); } catch(e){}
-      attachContentToAnchor(g, null); // will re-add model (and preserve existing video if any)
-      // If anchor currently tracked, make model visible now
-      if (isAnchorTracked && gltfModel) {
-        try { gltfModel.visible = true; if (mixer) mixer.timeScale = 1; } catch(e){}
-      }
-    }
+    loadedG = await loadGLTF(a.modelBlobUrl);
   }
-  // load video if missing
   if (!videoMesh && a.videoBlobUrl) {
-    const v = makeVideoElem(a.videoBlobUrl);
-    if (v) {
-      // if model is present, attach both properly
-      const dummyGltf = gltfModel ? { scene: gltfModel } : null;
-      attachContentToAnchor(dummyGltf, v);
-      if (isAnchorTracked && videoElem) {
-        try { videoMesh.visible = true; } catch(e){}
-      }
-    }
+    v = makeVideoElem(a.videoBlobUrl);
+  }
+  if (loadedG || v) {
+    attachContentToAnchor(loadedG ? loadedG : null, v ? v : null);
   }
 }
 
-/* compute single yaw angle for anchor->camera (used to sync both model+video) */
+/* yaw helpers */
 function computeAnchorCameraYaw() {
   if (!anchor || !anchor.group || !camera) return null;
   const anchorWorldPos = anchor.group.getWorldPosition(new THREE.Vector3());
@@ -560,8 +589,6 @@ function computeAnchorCameraYaw() {
   const angle = Math.atan2(dir.x, dir.z);
   return angle;
 }
-
-/* apply yaw to object (relative to parent) with smoothing */
 function applyYawToObject(obj, angle, smooth=1.0) {
   if (!obj || angle === null) return;
   try {
@@ -581,7 +608,7 @@ function applyYawToObject(obj, angle, smooth=1.0) {
   } catch(e){}
 }
 
-/* Ensure attached and visible (re-attach if necessary) */
+/* ensure attached & visible (re-attach if needed) */
 function ensureAttachedAndVisible() {
   try {
     if (!anchor || !anchor.group) return;
@@ -615,7 +642,7 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
-  // Attach Computer content if already loaded in assets
+  // If Computer assets already in memory, attach them; else attach null
   const comp = assets['Computer'] || {};
   const g = comp.modelBlobUrl ? await loadGLTF(comp.modelBlobUrl) : null;
   const v = comp.videoBlobUrl ? makeVideoElem(comp.videoBlobUrl) : null;
@@ -630,6 +657,7 @@ export async function initAndStart(containerElement) {
       hideScanFrameThen(() => {});
       try { await ensureContentForCareer(playingCareer); } catch(e){}
       ensureAttachedAndVisible();
+
       // resume if paused by tracking loss
       if (!autoPlayEnabled) return;
       if (pausedByTrackingLoss) {
@@ -637,17 +665,19 @@ export async function initAndStart(containerElement) {
         if (videoElem && videoElem.paused) try { videoElem.play(); } catch(e){}
         pausedByTrackingLoss = false;
         waitingForMarkerPlay = false;
+        setState(STATE.PLAYING);
         return;
       }
-      // if waiting for marker, start both model + video together
-      const startNow = () => {
-        if (mixer) try { mixer.timeScale = 1; } catch(e){}
-        if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
-      };
-      if (waitingForMarkerPlay || (videoElem && videoElem.paused && playingCareer)) {
-        setTimeout(startNow, 300);
-        waitingForMarkerPlay = false;
-        return;
+
+      // always try to start both model+video when anchor found
+      if (waitingForMarkerPlay) {
+        // attempt synchronized start, allow forced start after short delay
+        if (!startBothPlaybackIfReady(true)) {
+          // if not ready, try again after metadata/canplay or small timeout (handled by attach)
+        }
+      } else {
+        // if video exists but was paused, try resume
+        startBothPlaybackIfReady(false);
       }
     })();
   };
@@ -656,13 +686,14 @@ export async function initAndStart(containerElement) {
     isAnchorTracked = false;
     if (scanFrame()) scanFrame().style.display = 'none';
     if (!autoPlayEnabled) return;
+    // pause video and model
     if (videoElem && !videoElem.paused) {
-      try { videoElem.pause(); pausedByTrackingLoss = true; } catch(e){}
+      try { videoElem.pause(); pausedByTrackingLoss = true; wasPlayingBeforeLost = true; } catch(e){}
     }
     if (mixer) {
       try { mixer.timeScale = 0; } catch(e){}
     }
-    // DON'T remove children: keep them attached so re-scan reuses them
+    setState(STATE.PAUSED);
   };
 
   await mindarThree.start();
@@ -672,12 +703,12 @@ export async function initAndStart(containerElement) {
     if (mixer) mixer.update(delta);
 
     try {
-      // keep anchor group smoothing (unchanged)
       if (anchor && anchor.group && camera) {
         tmpObj.position.copy(anchor.group.getWorldPosition(new THREE.Vector3()));
         tmpObj.lookAt(camera.position);
         tmpObj.updateMatrixWorld();
         tmpObj.getWorldQuaternion(tmpQuat);
+
         if (anchor.group.parent) {
           anchor.group.parent.getWorldQuaternion(parentWorldQuat);
           parentWorldQuat.invert();
@@ -685,12 +716,11 @@ export async function initAndStart(containerElement) {
         } else {
           targetLocalQuat.copy(tmpQuat);
         }
+
         anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
       }
 
-      // compute single yaw angle and apply to both (sync)
       const yaw = computeAnchorCameraYaw();
-      // model smooth, video snap
       applyYawToObject(gltfModel, yaw, 0.92);
       applyYawToObject(videoMesh, yaw, 1.0);
 
@@ -709,6 +739,7 @@ export async function playCareer(career) {
     try { if (videoElem && videoElem.paused) videoElem.play(); } catch(e){}
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
     if (gltfModel) try { gltfModel.visible = true; } catch(e){}
+    setState(STATE.PLAYING);
     return;
   }
 
@@ -732,6 +763,8 @@ export async function playCareer(career) {
 
   setNoScan(true);
 
+  setState(STATE.WAITING);
+
   const a = assets[career] || {};
   const gltf = a.modelBlobUrl ? await loadGLTF(a.modelBlobUrl) : null;
   const vid = a.videoBlobUrl ? makeVideoElem(a.videoBlobUrl) : null;
@@ -742,20 +775,19 @@ export async function playCareer(career) {
   lastCareer = career;
   isPausedByBack = false;
 
+  // if anchor is tracked, start now (or shortly after to allow canplay)
   if (isAnchorTracked && autoPlayEnabled) {
     try { if (gltfModel) gltfModel.visible = true; } catch(e){}
     try { if (videoMesh) videoMesh.visible = true; } catch(e){}
-    setTimeout(()=> {
-      if (mixer) try { mixer.timeScale = 1; } catch(e){}
-      if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
-    }, 500);
+    // attempt a synchronized start (allow force start if video can't report canplay fast)
+    setTimeout(()=> { startBothPlaybackIfReady(true); }, 250);
     waitingForMarkerPlay = false;
   } else {
     waitingForMarkerPlay = true;
   }
 }
 
-/* pauseAndShowMenu, returnToLast, removeCurrentAndShowMenu, resetToIdle unchanged semantics */
+/* pauseAndShowMenu etc (update state) */
 export function pauseAndShowMenu() {
   if (videoElem) try { videoElem.pause(); } catch(e){}
   if (mixer) try { mixer.timeScale = 0; } catch(e){}
@@ -767,6 +799,7 @@ export function pauseAndShowMenu() {
   setNoScan(true);
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
+  setState(STATE.PAUSED);
 }
 
 export function returnToLast() {
@@ -780,6 +813,7 @@ export function returnToLast() {
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
     if (lastCareer !== 'Computer' && careerActions()) careerActions().style.display = 'flex';
     setNoScan(true);
+    setState(STATE.PLAYING);
     return;
   }
   playCareer(lastCareer);
@@ -796,6 +830,7 @@ export function removeCurrentAndShowMenu() {
   setNoScan(true);
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
+  setState(STATE.IDLE);
 }
 
 export function resetToIdle() {
@@ -807,11 +842,12 @@ export function resetToIdle() {
   pausedByTrackingLoss = false;
   setAutoPlayEnabled(false);
   setNoScan(true);
+  setState(STATE.IDLE);
 }
 
 export function getAssets() { return assets; }
 
-/* create lights helper (kept simple) */
+/* lights helper */
 function createLights(scene) {
   try {
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
