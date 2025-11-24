@@ -326,6 +326,16 @@ function attachContentToAnchor(gltf, video) {
       if (careerMenu()) careerMenu().style.display = 'flex';
       if (backBtn()) backBtn().style.display = 'none';
       if (scanFrame()) scanFrame().style.display = 'none';
+
+      // ensure UI buttons reflect current asset readiness and progress
+      try {
+        for (const c of careers) {
+          const a = assets[c] || {};
+          const pct = (a.modelBlobUrl && a.videoBlobUrl) ? 100 : 0;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: c, pct, file: null, type: pct===100 ? 'all' : 'none' } }));
+          if (pct === 100) document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: c } }));
+        }
+      } catch(e){}
     };
   }
 
@@ -571,41 +581,6 @@ async function ensureContentForCareer(career) {
   }
 }
 
-/* align content so model/video sit centered on the anchor and face the camera */
-function alignContentToCamera() {
-  try {
-    if (!anchor || !anchor.group || !camera) return;
-    if (!gltfModel && !videoMesh) return;
-    // compute a world quaternion that looks from anchor group to camera
-    const worldPos = new THREE.Vector3();
-    anchor.group.getWorldPosition(worldPos);
-    tmpObj.position.copy(worldPos);
-    tmpObj.lookAt(camera.position);
-    tmpObj.updateMatrixWorld();
-    tmpObj.getWorldQuaternion(tmpQuat);
-    if (anchor.group.parent) {
-      anchor.group.parent.getWorldQuaternion(parentWorldQuat);
-      parentWorldQuat.invert();
-      targetLocalQuat.copy(parentWorldQuat).multiply(tmpQuat);
-    } else {
-      targetLocalQuat.copy(tmpQuat);
-    }
-
-    if (gltfModel) {
-      // center model at anchor and orient to face camera
-      gltfModel.position.set(0, 0, 0);
-      gltfModel.quaternion.copy(targetLocalQuat);
-      gltfModel.updateMatrixWorld(true);
-    }
-    if (videoMesh) {
-      // put video slightly below center
-      videoMesh.position.set(0, -0.05, 0);
-      videoMesh.quaternion.copy(targetLocalQuat);
-      videoMesh.updateMatrixWorld(true);
-    }
-  } catch(e) { console.warn('alignContentToCamera err', e); }
-}
-
 /* MindAR init + attach/resume logic */
 function createLights(scene) {
   try {
@@ -684,6 +659,20 @@ export async function initAndStart(containerElement) {
 
       const startNow = async () => {
         try {
+          // If mixer is missing, try to reload GLTF for the playing career to ensure clips exist
+          try {
+            const a = assets[playingCareer] || {};
+            if (!mixer && a.modelBlobUrl) {
+              try {
+                const reGltf = await loadGLTF(a.modelBlobUrl);
+                if (reGltf && reGltf.scene) {
+                  // re-attach model while preserving current videoElem
+                  attachContentToAnchor(reGltf, videoElem);
+                  try { ensureAttachedAndVisible(); } catch(e){}
+                }
+              } catch(e) { console.warn('reload gltf fallback err', e); }
+            }
+          } catch(e){}
           try { console.debug('startNow entry', { career: playingCareer, hasGltf: !!gltfModel, hasMixer: !!mixer, actions: (gltfModel && gltfModel.userData && gltfModel.userData._actions) ? gltfModel.userData._actions.length : 0, videoPaused: videoElem ? videoElem.paused : null }); } catch(e){}
           // if actions already prepared, reset/play them
           if (gltfModel && gltfModel.userData && Array.isArray(gltfModel.userData._actions) && gltfModel.userData._actions.length) {
@@ -718,9 +707,6 @@ export async function initAndStart(containerElement) {
           try { mixer.update(0); } catch(e){}
           try { console.debug('startNow before RAF: mixer updated', { career: playingCareer }); } catch(e){}
         }
-
-        // align model/video to camera before the frame so they appear centered
-        try { alignContentToCamera(); } catch(e){}
 
         // ensure at least one RAF happens so three.js can bind skins/skeletons
         await new Promise(r => requestAnimationFrame(r));
@@ -881,8 +867,7 @@ export async function playCareer(career) {
     try { ensureAttachedAndVisible(); } catch(e){}
     try { if (gltfModel) gltfModel.visible = true; } catch(e){}
     try { if (videoMesh) videoMesh.visible = true; } catch(e){}
-    // align content and wait a couple frames so Three.js can bind skeletons and apply transforms
-    try { alignContentToCamera(); } catch(e){}
+    // wait a couple of frames so Three.js can bind skeletons and apply initial transforms
     await new Promise(r => requestAnimationFrame(r));
     await new Promise(r => requestAnimationFrame(r));
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
