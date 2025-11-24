@@ -61,3 +61,8 @@ body.no-scan #scan-frame::after {
 
 /* back top-left */
 #backBtn{position:fixed;left:12px;top:12px;display:none;z-index:200;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.5);color:var(--accent);cursor:pointer}
+/* --- career button bottom bar & ready state --- */
+.career-btn { position: relative; overflow: visible; }
+.career-btn .btn-bottom-bar { pointer-events: none; }
+.career-btn .btn-bottom-inner { width: 0%; height:100%; border-radius:8px; }
+.career-btn.career-ready { transition: box-shadow .2s, transform .14s; }

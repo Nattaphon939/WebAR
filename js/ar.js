@@ -1,8 +1,4 @@
-// js/ar.js (fixed: DRACO enabled for GLTFLoader)
-// Only changed: added DRACOLoader import + ensureDracoInitialized + use it in loadGLTF.
-// Keep the rest of your original logic intact. This file preserves your previous behavior
-// (attachContentToAnchor, playCareer, initAndStart, etc.) but ensures DRACO-compressed glTFs load.
-
+// /WEB/js/ar.js  (fix: auto-fetch fallback + ensure content on rescan + robust play)
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -12,13 +8,14 @@ const JOB_ROOT = './Job';
 const careers = ['Computer','AI','Cloud','Data_Center','Network'];
 const candidates = {
   Computer: { model: ['Computer-Model.glb','computer-model.glb','Computer-model.glb'], video: ['Computer.mp4','computer.mp4','Computer-Video.mp4'] },
-  AI:       { model: ['ai-model.glb','AI-model.glb','ai-model.GLTF','AI-Model.glb'], video: ['Al.mp4','AI.mp4','ai.mp4','ai-video.mp4'] },
+  AI:       { model: ['ai-model.glb','AI-model.glb','ai-model.GLTF','AI-Model.glb'], video: ['AI.mp4','ai.mp4','ai-video.mp4'] },
   Cloud:    { model: ['cloud-model.glb','Cloud-model.glb','cloud-model.GLTF'], video: ['video-cloud.mp4','cloud.mp4','cloud-video.mp4'] },
   Data_Center: { model: ['Data_Center-model.glb','Data_Center-model.glb','Data_ Center-model.glb','Data_Center-model.GLTF'], video: ['Data_Center-Video.mp4','data_center.mp4','data-center.mp4'] },
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
-const assets = {};
+const assets = {};      // per-career { modelBlobUrl, videoBlobUrl, markerBlobUrl }
+const gameAssets = {};
 
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
@@ -36,16 +33,13 @@ let playingCareer = null;
 let lastCareer = null;
 let isPausedByBack = false;
 
-// control whether AR should auto-play content when target found (false when game/menu overlay open)
 let autoPlayEnabled = true;
 export function setAutoPlayEnabled(flag) { autoPlayEnabled = !!flag; }
 
-// flags for tracking/play state
 let isAnchorTracked = false;
 let waitingForMarkerPlay = false;
 let pausedByTrackingLoss = false;
 
-// control to hide scan visuals when menu up
 let noScanMode = false;
 export function setNoScan(flag) {
   noScanMode = !!flag;
@@ -62,6 +56,21 @@ export function setNoScan(flag) {
   }
 }
 
+/* DRACO */
+let dracoLoaderInstance = null;
+function ensureDracoInitialized() {
+  if (dracoLoaderInstance) return dracoLoaderInstance;
+  try {
+    dracoLoaderInstance = new DRACOLoader();
+    dracoLoaderInstance.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+  } catch(e) {
+    console.warn('DRACO init failed', e);
+    dracoLoaderInstance = null;
+  }
+  return dracoLoaderInstance;
+}
+
+/* temporaries */
 const tmpObj = new THREE.Object3D();
 const tmpQuat = new THREE.Quaternion();
 const parentWorldQuat = new THREE.Quaternion();
@@ -71,140 +80,52 @@ const worldMin = new THREE.Vector3();
 const worldPos = new THREE.Vector3();
 const SMOOTH_FACTOR = 0.12;
 
-// helper: fade out scan-frame, then call callback
-function hideScanFrameThen(callback) {
-  const sf = scanFrame();
-  if (!sf) {
-    if (callback) callback();
-    return;
-  }
-
-  // if noScanMode or career menu visible -> ensure hidden, then callback
-  if (noScanMode) {
-    sf.style.display = 'none';
-    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    if (callback) callback();
-    return;
-  }
-
-  const cm = careerMenu();
-  try {
-    const cmStyle = cm ? window.getComputedStyle(cm) : null;
-    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '0') {
-      sf.style.display = 'none';
-      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-      if (callback) callback();
-      return;
-    }
-  } catch(e){}
-
-  const curDisplay = window.getComputedStyle(sf).display;
-  if (curDisplay === 'none' || sf.style.display === 'none') {
-    if (callback) callback();
-    return;
-  }
-
-  sf.style.transition = 'opacity 260ms ease';
-  sf.style.opacity = '1';
-  // trigger reflow
-  sf.offsetHeight;
-  sf.style.opacity = '0';
-
-  const tid = setTimeout(() => {
-    try {
-      sf.style.display = 'none';
-      sf.style.transition = '';
-      sf.style.opacity = '1';
-      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    } catch (e) {}
-    clearTimeout(tid);
-    if (callback) callback();
-  }, 300);
-}
-
-// helper: show scan frame (immediate) but keep it hidden when menu is visible or noScanMode
-function showScanFrame() {
-  const sf = scanFrame();
-  if (!sf) return;
-  if (noScanMode) {
-    sf.style.display = 'none';
-    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    return;
-  }
-  const cm = careerMenu();
-  try {
-    const cmStyle = cm ? window.getComputedStyle(cm) : null;
-    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '1') {
-      sf.style.display = 'none';
-      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-      return;
-    }
-  } catch(e){}
-  sf.style.transition = '';
-  sf.style.opacity = '1';
-  sf.style.display = 'flex';
-  Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = '');
-}
-
-// helpers (fetch assets)
-async function findAndFetch(career, list) {
+/* basic fetch helper (no progress) - returns blobUrl or null */
+async function fetchFirstAvailable(career, list) {
   for (const name of list) {
     const url = `${JOB_ROOT}/${career}/${name}`;
     try {
-      const res = await fetch(url, { method: 'GET' });
+      const res = await fetch(encodeURI(url));
       if (!res.ok) continue;
-      const blob = await res.blob();
-      return { blob, url };
-    } catch (e) { /* try next */ }
+      const b = await res.blob();
+      if (!b || b.size === 0) continue;
+      return URL.createObjectURL(b);
+    } catch(e){}
   }
   return null;
 }
 
-export async function preloadAll(onProgress = ()=>{}) {
-  let total = careers.length * 2;
-  let done = 0;
-  function tick() { done++; const pct = Math.round((done / total) * 100); onProgress(pct); }
-
-  for (const career of careers) {
-    assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-    const m = await findAndFetch(career, candidates[career].model);
-    if (m && m.blob && m.blob.size>0) assets[career].modelBlobUrl = URL.createObjectURL(m.blob);
-    else console.warn(`ไม่พบ model สำหรับ ${career} -> ตรวจสอบชื่อไฟล์ใน ${JOB_ROOT}/${career}`);
-    tick();
-
-    const v = await findAndFetch(career, candidates[career].video);
-    if (v && v.blob && v.blob.size>0) assets[career].videoBlobUrl = URL.createObjectURL(v.blob);
-    else console.warn(`ไม่พบ video สำหรับ ${career} -> ตรวจสอบชื่อไฟล์ใน ${JOB_ROOT}/${career}`);
-    tick();
+/* fetchWithProgress (kept for other flows) */
+async function fetchWithProgress(url, onProgress = ()=>{}) {
+  const resp = await fetch(encodeURI(url));
+  if (!resp.ok) throw new Error(`fetch failed ${url} ${resp.status}`);
+  const contentLength = resp.headers.get('Content-Length');
+  if (!resp.body || !contentLength) {
+    const blob = await resp.blob();
+    onProgress(100);
+    return blob;
   }
-  onProgress(100);
-  return assets;
-}
-
-// --- DRACO support ---
-let dracoLoaderInstance = null;
-function ensureDracoInitialized() {
-  if (dracoLoaderInstance) return dracoLoaderInstance;
-  try {
-    dracoLoaderInstance = new DRACOLoader();
-    // use CDN decoder (works in most dev setups). If you prefer local files, host decoder under /draco/ and set that path.
-    dracoLoaderInstance.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
-  } catch(e) {
-    console.warn('Failed to init DRACOLoader', e);
-    dracoLoaderInstance = null;
+  const total = parseInt(contentLength, 10);
+  const reader = resp.body.getReader();
+  let received = 0;
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    const pct = Math.round((received / total) * 100);
+    try { onProgress(pct); } catch(e){}
   }
-  return dracoLoaderInstance;
+  let size = 0;
+  for (const c of chunks) size += c.length;
+  const combined = new Uint8Array(size);
+  let offset = 0;
+  for (const c of chunks) { combined.set(c, offset); offset += c.length; }
+  return new Blob([combined]);
 }
 
-function createLights(scene) {
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
-  hemi.position.set(0,1,0);
-  scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff,1);
-  dir.position.set(0,1,1);
-  scene.add(dir);
-}
-
+/* GLTF loader + DRACO */
 function loadGLTF(blobUrl) {
   return new Promise((resolve) => {
     if (!blobUrl) return resolve(null);
@@ -212,11 +133,10 @@ function loadGLTF(blobUrl) {
     try {
       const dr = ensureDracoInitialized();
       if (dr) loader.setDRACOLoader(dr);
-    } catch(e) { console.warn('setDRACOLoader failed', e); }
+    } catch(e){}
     loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
   });
 }
-
 function makeVideoElem(blobUrl) {
   if (!blobUrl) return null;
   const v = document.createElement('video');
@@ -229,47 +149,118 @@ function makeVideoElem(blobUrl) {
   return v;
 }
 
+/* rendering priorities */
+function makeModelRenderPriority(model) {
+  try {
+    model.traverse(node => {
+      if (node.isMesh) {
+        node.renderOrder = 20;
+        try {
+          node.material.depthTest = true;
+          node.material.depthWrite = true;
+          node.material.transparent = node.material.transparent || false;
+          node.material.needsUpdate = true;
+        } catch(e){}
+        node.frustumCulled = false;
+      }
+    });
+  } catch(e){}
+}
+function makeVideoLayer(vm) {
+  try {
+    if (!vm) return;
+    vm.renderOrder = 1;
+    if (vm.material) {
+      try {
+        vm.material.depthWrite = false;
+        vm.material.depthTest = true;
+        vm.material.transparent = true;
+        vm.material.needsUpdate = true;
+      } catch(e){}
+    }
+    vm.frustumCulled = false;
+  } catch(e){}
+}
+
+/* ensure attached and visible */
+function ensureAttachedAndVisible() {
+  try {
+    if (!anchor || !anchor.group) return;
+    if (gltfModel) {
+      if (gltfModel.parent !== anchor.group) {
+        try { anchor.group.add(gltfModel); } catch(e){ console.warn('attach gltfModel err', e); }
+      }
+      gltfModel.visible = true;
+      makeModelRenderPriority(gltfModel);
+      gltfModel.traverse(node => {
+        if (node.isMesh) {
+          node.visible = true;
+          node.frustumCulled = false;
+        }
+      });
+    }
+    if (videoMesh) {
+      if (videoMesh.parent !== anchor.group) {
+        try { anchor.group.add(videoMesh); } catch(e){ console.warn('attach videoMesh err', e); }
+      }
+      videoMesh.visible = true;
+      makeVideoLayer(videoMesh);
+    }
+  } catch(e){ console.warn('ensureAttachedAndVisible err', e); }
+}
+
+/* clear/attach */
 function clearAnchorContent(keep=false) {
   if (keep) {
-    if (videoElem) { try { videoElem.pause(); } catch(e){} }
-    if (mixer) { try { mixer.timeScale = 0; } catch(e){} }
+    if (videoElem) try { videoElem.pause(); } catch(e){}
+    if (mixer) try { mixer.timeScale = 0; } catch(e){}
     isPausedByBack = true;
     waitingForMarkerPlay = false;
     pausedByTrackingLoss = false;
     return;
   }
-
-  if (mixer) { try { mixer.stopAllAction(); } catch(e){} mixer = null; }
-  if (gltfModel) { try{ anchor.group.remove(gltfModel); }catch{} gltfModel = null; }
-  if (videoMesh) { try{ anchor.group.remove(videoMesh); }catch{} videoMesh = null; }
-  if (videoElem) { try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null; }
+  if (mixer) try { mixer.stopAllAction(); } catch(e){} mixer = null;
+  if (gltfModel) try{ if (gltfModel.parent) gltfModel.parent.remove(gltfModel); }catch{} gltfModel = null;
+  if (videoMesh) try{ if (videoMesh.parent) videoMesh.parent.remove(videoMesh); }catch{} videoMesh = null;
+  if (videoElem) try{ videoElem.pause(); videoElem.src = ''; }catch{} videoElem = null;
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
 }
 
+/* attachContentToAnchor */
 function attachContentToAnchor(gltf, video) {
-  if (gltfModel) { try{ anchor.group.remove(gltfModel); } catch(e){} gltfModel = null; }
-  if (videoMesh) { try{ anchor.group.remove(videoMesh); } catch(e){} videoMesh = null; }
-  if (videoElem) { try{ videoElem.pause(); } catch(e){} videoElem = null; }
+  // remove previous references (keep object URLs alive, but remove from scene)
+  if (gltfModel) try{ if (gltfModel.parent) gltfModel.parent.remove(gltfModel); }catch{} gltfModel = null;
+  if (videoMesh) try{ if (videoMesh.parent) videoMesh.parent.remove(videoMesh); }catch{} videoMesh = null;
+  if (videoElem) try{ videoElem.pause(); } catch(e){} videoElem = null;
   mixer = null;
 
   if (gltf && gltf.scene) {
     gltfModel = gltf.scene;
-    // tag source for debugging
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     gltfModel.scale.set(0.4,0.4,0.4);
     gltfModel.position.set(-0.25, -0.45, 0.05);
     gltfModel.visible = false;
-    anchor.group.add(gltfModel);
+    try { anchor && anchor.group && anchor.group.add(gltfModel); } catch(e){}
     try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
     if (gltf.animations && gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(gltfModel);
-      gltf.animations.forEach(c => { const action = mixer.clipAction(c); action.play(); });
+      // ensure actions are prepared but paused initially and store them for later control
+      const actions = [];
+      gltf.animations.forEach(c => {
+        try {
+          const action = mixer.clipAction(c);
+          action.reset();
+          action.play();
+          action.enabled = true;
+          actions.push(action);
+        } catch(e) { console.warn('action setup err', e); }
+      });
+      try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData._actions = actions; } catch(e){}
+      // paused until we explicitly resume (set timeScale = 1)
       mixer.timeScale = 0;
     }
-    // increase render priority
-    try { gltfModel.traverse(n=>{ if (n.isMesh) { n.renderOrder = 2; if (n.material) { n.material.depthTest = true; n.material.depthWrite = true; } } }); } catch(e){}
-    console.log('AR: model attached for', gltfModel.userData.sourceCareer);
+    try { makeModelRenderPriority(gltfModel); } catch(e){}
   }
 
   if (video) {
@@ -282,15 +273,16 @@ function attachContentToAnchor(gltf, video) {
     videoMesh = new THREE.Mesh(plane, mat);
     videoMesh.position.set(0, -0.05, 0);
     videoMesh.visible = false;
-    anchor.group.add(videoMesh);
+    try { anchor && anchor.group && anchor.group.add(videoMesh); } catch(e){}
     try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
+    makeVideoLayer(videoMesh);
 
     videoElem.onloadedmetadata = () => {
       try {
-        const asp = videoElem.videoWidth / videoElem.videoHeight || (9/16);
+        const asp = (videoElem.videoWidth / videoElem.videoHeight) || (9/16);
         const width = 0.6;
         const height = width / asp;
-        videoMesh.geometry.dispose();
+        if (videoMesh.geometry) videoMesh.geometry.dispose();
         videoMesh.geometry = new THREE.PlaneGeometry(width, height);
         videoMesh.position.set(0, 0, 0);
 
@@ -323,12 +315,268 @@ function attachContentToAnchor(gltf, video) {
       if (scanFrame()) scanFrame().style.display = 'none';
     };
   }
+
+  // emit career-ready events if both assets available
+  try {
+    for (const c of careers) {
+      const a = assets[c] || {};
+      if (a.modelBlobUrl && a.videoBlobUrl) {
+        try { document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: c } })); } catch(e){}
+      }
+    }
+  } catch(e){}
+}
+
+/* ensureCareerLoaded (sequential per career folder) */
+export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
+  if (!career || !careers.includes(career)) throw new Error('invalid career ' + career);
+  if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null, markerBlobUrl: null };
+
+  const a = assets[career];
+  const alreadyModel = !!(a.modelBlobUrl);
+  const alreadyVideo = !!(a.videoBlobUrl);
+
+  if (alreadyModel && alreadyVideo) {
+    onProgress(100, null, null);
+    document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: null, type: 'all' } }));
+    return assets[career];
+  }
+
+  const files = [];
+  if (career === 'Computer') {
+    files.push({ url: `${JOB_ROOT}/Computer/marker.mind`, type: 'marker', key: 'markerBlobUrl' });
+  }
+  files.push({ url: `${JOB_ROOT}/${career}/${candidates[career].model[0]}`, type: 'model', key: 'modelBlobUrl' });
+  files.push({ url: `${JOB_ROOT}/${career}/${candidates[career].video[0]}`, type: 'video', key: 'videoBlobUrl' });
+
+  const totalFiles = files.length;
+  for (let i=0;i<files.length;i++){
+    const it = files[i];
+    if (assets[career][it.key]) {
+      const pctOverall = Math.round(((i+1) / totalFiles) * 100);
+      try { onProgress(pctOverall, it.url, it.type); } catch(e){}
+      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type } }));
+      continue;
+    }
+    try {
+      const blob = await fetchWithProgress(it.url, (p)=> {
+        const base = (i) / totalFiles * 100;
+        const overall = Math.round(base + (p/totalFiles));
+        try { onProgress(overall, it.url, it.type); } catch(e){}
+        document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: overall, file: it.url, type: it.type } }));
+      });
+      const blobUrl = URL.createObjectURL(blob);
+      assets[career][it.key] = blobUrl;
+      const pctOverall = Math.round(((i+1) / totalFiles) * 100);
+      try { onProgress(pctOverall, it.url, it.type); } catch(e){}
+      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type } }));
+    } catch (e) {
+      // fallback: try fetchFirstAvailable for that type (silent)
+      try {
+        if (it.type === 'model') {
+          const fallback = await fetchFirstAvailable(career, candidates[career].model);
+          if (fallback) assets[career].modelBlobUrl = fallback;
+        } else if (it.type === 'video') {
+          const fallback = await fetchFirstAvailable(career, candidates[career].video);
+          if (fallback) assets[career].videoBlobUrl = fallback;
+        } else if (it.type === 'marker') {
+          // ignore
+        }
+      } catch(err){}
+      assets[career][it.key] = assets[career][it.key] || null;
+      const pctOverall = Math.round(((i+1) / totalFiles) * 100);
+      try { onProgress(pctOverall, it.url, it.type, false); } catch(e){}
+      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type, ok:false } }));
+    }
+  }
+  return assets[career];
+}
+
+/* preloadCritical simplified wrapper (keeps API) */
+export async function preloadCritical(onProgress = ()=>{}) {
+  try { onProgress({ phase:'phaseA-start', pct:0 }); } catch(e){}
+  try {
+    await ensureCareerLoaded('Computer', (pct, file, type) => {
+      try { onProgress({ phase:'phaseA-career', career:'Computer', pct, file, type, startReady:false }); } catch(e){}
+    });
+  } catch(e) { try { onProgress({ phase:'phaseA-error', pct: 10 }); } catch(e){} }
+
+  const order = [...careers].filter(c => c !== 'Computer');
+  for (let ci=0; ci<order.length; ci++) {
+    const career = order[ci];
+    try {
+      await ensureCareerLoaded(career, (pct, file, type) => {
+        const doneCareers = ci + (pct/100);
+        const overall = Math.round((doneCareers / order.length) * 100);
+        try { onProgress({ phase:'phaseB-career', career, pct, file, type, overall }); } catch(e){}
+      });
+    } catch(e) { try { onProgress({ phase:'phaseB-career-error', career, pct:100 }); } catch(e){} }
+    try {
+      const compReady = isCareerReady('Computer');
+      const readyCount = careers.reduce((acc,c)=> acc + (isCareerReady(c) ? 1 : 0), 0);
+      const startOk = compReady && readyCount >= 2;
+      onProgress({ phase:'check-start', startReady: startOk, pct: 0 });
+    } catch(e){}
+  }
+
+  // background: try load common game assets quietly
+  try {
+    onProgress({ phase:'phaseC-start', pct:0 });
+    const mfRes = await fetch(encodeURI('game_assets/manifest.json'));
+    if (mfRes && mfRes.ok) {
+      const mf = await mfRes.json();
+      const list = [];
+      for (const item of mf) {
+        if (item.image) list.push(`game_assets/cards/${item.image}`);
+        if (item.audioWord) list.push(`game_assets/audio/${item.audioWord}`);
+        if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
+      }
+      list.push('game_assets/sfx/flip.wav','game_assets/sfx/match.wav','game_assets/sfx/wrong.wav','game_assets/sfx/win.mp3');
+      let done = 0;
+      await Promise.all(list.map(async u => {
+        try {
+          const r = await fetch(encodeURI(u));
+          if (!r.ok) { done++; onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) }); return; }
+          const b = await r.blob();
+          gameAssets[u.replace('game_assets/','')] = URL.createObjectURL(b);
+          done++;
+          onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) });
+        } catch(e) { done++; onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) }); }
+      }));
+    } else {
+      onProgress({ phase:'phaseC', pct: 50 });
+    }
+  } catch(e) { onProgress({ phase:'phaseC-error', pct: 50 }); }
+
+  assets.gameAssets = gameAssets;
+  onProgress({ phase:'critical-done', pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) });
+  return assets;
+}
+
+export function isCareerReady(career) {
+  const a = assets[career] || {};
+  return !!(a && a.modelBlobUrl && a.videoBlobUrl);
+}
+
+/* preloadRemaining (background) */
+export async function preloadRemaining() {
+  const urls = [];
+  for (const career of careers) {
+    if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+    const a = assets[career];
+    if (!a.modelBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
+    if (!a.videoBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
+  }
+  try {
+    const mf = await fetch('game_assets/manifest.json');
+    if (mf && mf.ok) {
+      const manifest = await mf.json();
+      for (const item of manifest) {
+        if (item.image) urls.push(`game_assets/cards/${item.image}`);
+        if (item.audioWord) urls.push(`game_assets/audio/${item.audioWord}`);
+        if (item.audioMeaning) urls.push(`game_assets/audio/${item.audioMeaning}`);
+      }
+    }
+  } catch(e){}
+  const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
+  for (const f of sfx) urls.push(`game_assets/sfx/${f}`);
+  const final = Array.from(new Set(urls));
+  await Promise.all(final.map(async u => {
+    try {
+      const r = await fetch(encodeURI(u));
+      if (!r.ok) return;
+      const blob = await r.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      if (u.startsWith(`${JOB_ROOT}/`)) {
+        const parts = u.split('/');
+        const career = parts[2];
+        const low = u.toLowerCase();
+        if (low.endsWith('.glb') || low.endsWith('.gltf')) {
+          assets[career].modelBlobUrl = assets[career].modelBlobUrl || blobUrl;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'model' } }));
+        } else {
+          assets[career].videoBlobUrl = assets[career].videoBlobUrl || blobUrl;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'video' } }));
+        }
+      } else if (u.startsWith('game_assets/')) {
+        gameAssets[u.replace('game_assets/','')] = blobUrl;
+      }
+    } catch(e){}
+  }));
+  return;
+}
+
+/* Ensure content exist for the current career: if missing, try fallback fetch then attach */
+async function ensureContentForCareer(career) {
+  if (!career) return;
+  if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+
+  const a = assets[career];
+
+  // model: if not available, try to fetch candidate file directly
+  if (!a.modelBlobUrl) {
+    try {
+      const fb = await fetchFirstAvailable(career, candidates[career].model);
+      if (fb) {
+        a.modelBlobUrl = fb;
+        document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: 'fallback-model', type: 'model' } }));
+      }
+    } catch(e){}
+  }
+
+  // video: same
+  if (!a.videoBlobUrl) {
+    try {
+      const fv = await fetchFirstAvailable(career, candidates[career].video);
+      if (fv) {
+        a.videoBlobUrl = fv;
+        document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: 'fallback-video', type: 'video' } }));
+      }
+    } catch(e){}
+  }
+
+  // attach model if missing in scene
+  if (!gltfModel && a.modelBlobUrl) {
+    const g = await loadGLTF(a.modelBlobUrl);
+    if (g) {
+      attachContentToAnchor(g, null);
+      if (isAnchorTracked && gltfModel) {
+        try { gltfModel.visible = true; if (mixer) mixer.timeScale = 1; } catch(e){}
+      }
+    }
+  }
+
+  // attach video if missing in scene
+  if (!videoMesh && a.videoBlobUrl) {
+    const v = makeVideoElem(a.videoBlobUrl);
+    if (v) {
+      attachContentToAnchor(gltfModel ? { scene: gltfModel } : null, v);
+      if (isAnchorTracked && videoElem) {
+        try { videoMesh.visible = true; } catch(e){}
+      }
+    }
+  }
+}
+
+/* MindAR init + attach/resume logic */
+function createLights(scene) {
+  try {
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
+    hemi.position.set(0, 1, 0);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(0.5, 1, 0.5);
+    scene.add(dir);
+    const amb = new THREE.AmbientLight(0x202020, 0.6);
+    scene.add(amb);
+  } catch(e){}
 }
 
 export async function initAndStart(containerElement) {
+  const markerSrc = (assets['Computer'] && assets['Computer'].markerBlobUrl) ? assets['Computer'].markerBlobUrl : `${JOB_ROOT}/Computer/marker.mind`;
   mindarThree = new MindARThree({
     container: containerElement,
-    imageTargetSrc: `${JOB_ROOT}/Computer/marker.mind`,
+    imageTargetSrc: markerSrc,
     sticky: true,
     filterMinCF: 0.0001,
     filterBeta: 0.005
@@ -338,47 +586,58 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
-  // initial attach (hidden + paused)
-  const comp = assets['Computer'] || {};
-  const g = await loadGLTF(comp.modelBlobUrl);
-  const v = makeVideoElem(comp.videoBlobUrl);
-  attachContentToAnchor(g, v);
+  // try ensure Computer content (will fallback-fetch if not preloaded)
+  await ensureContentForCareer('Computer');
+
   playingCareer = 'Computer';
   lastCareer = 'Computer';
   if (careerActions()) careerActions().style.display = 'none';
 
-  anchor.onTargetFound = () => {
+  anchor.onTargetFound = async () => {
     isAnchorTracked = true;
-
-    // hide scan-frame first, then reveal and possibly play (with 1s delay before play)
-    hideScanFrameThen(() => {
-      // reveal model & video meshes first (visible true)
+    hideScanFrameThen(async () => {
+      try { await ensureContentForCareer(playingCareer); } catch(e){}
+      try { ensureAttachedAndVisible(); } catch(e){}
       try { if (gltfModel) gltfModel.visible = true; } catch(e){}
       try { if (videoMesh) videoMesh.visible = true; } catch(e){}
 
-      // if autoplay disabled (menu/game open) do nothing further
-      if (!autoPlayEnabled) {
-        return;
-      }
+      if (!autoPlayEnabled) return;
 
-      // resume after tracking-loss if needed
       if (pausedByTrackingLoss) {
         if (mixer) try { mixer.timeScale = 1; } catch(e){}
-        if (videoElem && videoElem.paused) try { videoElem.play(); } catch(e){}
+        if (videoElem && videoElem.paused) {
+          try { await videoElem.play(); } catch(err){
+            // try muted fallback (some mobile browsers require muted to autoplay)
+            try { videoElem.muted = true; await videoElem.play(); } catch(e){}
+          }
+        }
         pausedByTrackingLoss = false;
         waitingForMarkerPlay = false;
         return;
       }
 
-      const startNow = () => {
+      const startNow = async () => {
+        // ensure model animation actions are reset & playing, then un-pause mixer
+        try {
+          if (gltfModel && gltfModel.userData && Array.isArray(gltfModel.userData._actions)) {
+            gltfModel.userData._actions.forEach(a => {
+              try { a.reset(); a.play(); a.enabled = true; a.setEffectiveWeight && a.setEffectiveWeight(1); } catch(e){}
+            });
+          }
+        } catch(e) { console.warn('startNow actions err', e); }
         if (mixer) try { mixer.timeScale = 1; } catch(e){}
         if (videoElem) {
-          try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
+          try {
+            if (waitingForMarkerPlay) try{ videoElem.currentTime = 0; }catch(e){}
+            await videoElem.play();
+          } catch(err){
+            try { videoElem.muted = true; await videoElem.play(); } catch(e){}
+          }
         }
       };
 
       if (waitingForMarkerPlay || (videoElem && videoElem.paused && playingCareer)) {
-        setTimeout(startNow, 1000);
+        setTimeout(()=> { startNow(); }, 1000);
         waitingForMarkerPlay = false;
         return;
       }
@@ -387,12 +646,8 @@ export async function initAndStart(containerElement) {
 
   anchor.onTargetLost = () => {
     isAnchorTracked = false;
-    // keep scan frame hidden
     if (scanFrame()) scanFrame().style.display = 'none';
-
     if (!autoPlayEnabled) return;
-
-    // pause playing and mark pausedByTrackingLoss
     if (videoElem && !videoElem.paused) {
       try { videoElem.pause(); pausedByTrackingLoss = true; } catch(e){}
     }
@@ -406,7 +661,6 @@ export async function initAndStart(containerElement) {
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
-
     try {
       if (anchor && anchor.group && camera) {
         tmpObj.position.copy(anchor.group.getWorldPosition(new THREE.Vector3()));
@@ -424,13 +678,49 @@ export async function initAndStart(containerElement) {
 
         anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
       }
-    } catch(e) { /* non-fatal */ }
-
+    } catch(e){}
     renderer.render(scene, camera);
   });
 }
 
-// exported UI actions
+/* hideScanFrameThen (kept simple) */
+function hideScanFrameThen(callback) {
+  const sf = scanFrame();
+  if (!sf) { if (callback) callback(); return; }
+  if (noScanMode) {
+    sf.style.display = 'none';
+    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    if (callback) callback();
+    return;
+  }
+  const cm = careerMenu();
+  try {
+    const cmStyle = cm ? window.getComputedStyle(cm) : null;
+    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '0') {
+      sf.style.display = 'none';
+      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+      if (callback) callback();
+      return;
+    }
+  } catch(e){}
+  const curDisplay = window.getComputedStyle(sf).display;
+  if (curDisplay === 'none' || sf.style.display === 'none') { if (callback) callback(); return; }
+  sf.style.transition = 'opacity 200ms ease';
+  sf.style.opacity = '1';
+  sf.offsetHeight;
+  sf.style.opacity = '0';
+  setTimeout(()=> {
+    try {
+      sf.style.display = 'none';
+      sf.style.transition = '';
+      sf.style.opacity = '1';
+      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    } catch(e){}
+    if (callback) callback();
+  }, 220);
+}
+
+/* Play career */
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
@@ -441,7 +731,24 @@ export async function playCareer(career) {
   }
 
   setAutoPlayEnabled(true);
+  // If same career and paused by back -> resume from current position
+  if (playingCareer === career && isPausedByBack) {
+    isPausedByBack = false;
+    setAutoPlayEnabled(true);
+    setNoScan(true);
+    if (isAnchorTracked) {
+      try { ensureAttachedAndVisible(); } catch(e){}
+      try { if (gltfModel) { gltfModel.visible = true; if (mixer) mixer.timeScale = 1; } } catch(e){}
+      try { if (videoMesh) videoMesh.visible = true; } catch(e){}
+      try { if (videoElem && videoElem.paused) videoElem.play().catch(()=>{ videoElem.muted=true; videoElem.play().catch(()=>{}); }); } catch(e){}
+      waitingForMarkerPlay = false;
+    } else {
+      waitingForMarkerPlay = true;
+    }
+    return;
+  }
 
+  // switching to new career: clear previous and attach new
   if (playingCareer && playingCareer !== career) {
     clearAnchorContent(false);
     playingCareer = null;
@@ -450,12 +757,16 @@ export async function playCareer(career) {
     pausedByTrackingLoss = false;
   }
 
-  // IMPORTANT: hide scan visuals immediately when user requests play (we will reveal & delay onTargetFound)
   setNoScan(true);
 
+  // ensure assets exist (fallback-fetch if needed) then attach
+  if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+  try { await ensureCareerLoaded(career, ()=>{}); } catch(e){}
+  try { await ensureContentForCareer(career); } catch(e){}
+
   const a = assets[career] || {};
-  const gltf = await loadGLTF(a.modelBlobUrl);
-  const vid = makeVideoElem(a.videoBlobUrl);
+  const gltf = a.modelBlobUrl ? await loadGLTF(a.modelBlobUrl) : null;
+  const vid = a.videoBlobUrl ? makeVideoElem(a.videoBlobUrl) : null;
 
   attachContentToAnchor(gltf, vid);
 
@@ -463,13 +774,15 @@ export async function playCareer(career) {
   lastCareer = career;
   isPausedByBack = false;
 
-  // If anchor currently tracked & autoplay enabled -> reveal then start after 1s
   if (isAnchorTracked && autoPlayEnabled) {
+    try { ensureAttachedAndVisible(); } catch(e){}
     try { if (gltfModel) gltfModel.visible = true; } catch(e){}
     try { if (videoMesh) videoMesh.visible = true; } catch(e){}
     setTimeout(()=> {
       if (mixer) try { mixer.timeScale = 1; } catch(e){}
-      if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(e){}
+      if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(err){
+        try { videoElem.muted = true; videoElem.play(); } catch(e){}
+      }
     }, 1000);
     waitingForMarkerPlay = false;
   } else {
@@ -477,18 +790,16 @@ export async function playCareer(career) {
   }
 }
 
+/* UI helpers (unchanged semantics) */
 export function pauseAndShowMenu() {
-  if (videoElem) { try { videoElem.pause(); } catch(e){ console.warn(e); } }
-  if (mixer) { try { mixer.timeScale = 0; } catch(e){ console.warn(e); } }
+  if (videoElem) try { videoElem.pause(); } catch(e){}
+  if (mixer) try { mixer.timeScale = 0; } catch(e){}
   isPausedByBack = true;
   setAutoPlayEnabled(false);
   if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
-
-  // when showing menu, hide scan visuals
   setNoScan(true);
-
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
 }
@@ -497,12 +808,13 @@ export function returnToLast() {
   if (!lastCareer) return;
   setAutoPlayEnabled(true);
   if (playingCareer === lastCareer && isPausedByBack && videoElem) {
-    if (careerMenu()) careerMenu().style.display = 'flex';
+    if (careerMenu()) careerMenu().style.display = 'none';
     if (backBtn()) backBtn().style.display = 'inline-block';
     isPausedByBack = false;
-    try { if (gltfModel) gltfModel.visible = true; if (videoMesh) videoMesh.visible = true; videoElem.play(); } catch(e){ console.warn(e); }
+    try { if (gltfModel) gltfModel.visible = true; if (videoMesh) videoMesh.visible = true; if (videoElem && videoElem.paused) videoElem.play(); } catch(e){}
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
     if (lastCareer !== 'Computer' && careerActions()) careerActions().style.display = 'flex';
+    setNoScan(true);
     return;
   }
   playCareer(lastCareer);
@@ -516,24 +828,19 @@ export function removeCurrentAndShowMenu() {
   if (careerActions()) careerActions().style.display = 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
-
-  // ensure scan visuals hidden when menu shown
   setNoScan(true);
-
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
 }
 
-// reset to idle (remove content, disable autoplay)
 export function resetToIdle() {
-  try { clearAnchorContent(false); } catch(e){ console.warn('resetToIdle clear err', e); }
+  try { clearAnchorContent(false); } catch(e){}
   playingCareer = null;
   lastCareer = null;
   isPausedByBack = false;
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
   setAutoPlayEnabled(false);
-  // hide scan visuals when we go idle (menu or overlay)
   setNoScan(true);
 }
 

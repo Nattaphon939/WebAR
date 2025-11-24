@@ -1,189 +1,103 @@
-// js/buttons.js
+// /WEB/js/buttons.js  (REPLACE FULL)
 import * as AR from './ar.js';
 
-let inited = false;
+/* create wide progress bar at bottom-center inside button */
+function createButtonBarElement() {
+  const wrap = document.createElement('div');
+  wrap.className = 'btn-bottom-bar';
+  wrap.style.position = 'absolute';
+  wrap.style.left = '6px';
+  wrap.style.right = '6px';
+  wrap.style.bottom = '6px';
+  wrap.style.width = 'auto';
+  wrap.style.height = '8px';
+  wrap.style.borderRadius = '8px';
+  wrap.style.background = 'rgba(255,255,255,0.06)';
+  wrap.style.overflow = 'hidden';
+  wrap.style.boxShadow = 'inset 0 0 0 1px rgba(0,0,0,0.06)';
+  wrap.style.pointerEvents = 'none';
 
-function ensureSingle(fn) {
-  return (...args) => { try { fn(...args); } catch(e){ console.warn(e); } };
+  const inner = document.createElement('div');
+  inner.className = 'btn-bottom-inner';
+  inner.style.height = '100%';
+  inner.style.width = '0%';
+  inner.style.transition = 'width .28s ease';
+  inner.style.background = 'linear-gradient(90deg,#00e5ff,#0077ff)';
+  wrap.appendChild(inner);
+  return { wrap, inner };
 }
 
-function setCareerButtonState(btn, enabled) {
-  try {
-    btn.disabled = !enabled;
-    if (enabled) {
-      btn.style.opacity = '1';
-      btn.style.pointerEvents = '';
-    } else {
-      btn.style.opacity = '0.5';
-      btn.style.pointerEvents = 'none';
-    }
-  } catch(e){}
+function setButtonState(btn, ready) {
+  if (ready) {
+    btn.disabled = false;
+    btn.style.filter = '';
+    btn.style.opacity = '1';
+    btn.classList.add('career-ready');
+    // visual highlight
+    btn.style.boxShadow = '0 10px 28px rgba(0,183,255,0.18)';
+    btn.style.transform = 'translateY(-2px)';
+  } else {
+    btn.disabled = true;
+    btn.style.filter = 'grayscale(24%) brightness(0.72)';
+    btn.style.opacity = '0.9';
+    btn.classList.remove('career-ready');
+    btn.style.boxShadow = '';
+    btn.style.transform = '';
+  }
 }
 
-function isCareerReady(career) {
-  try {
-    const a = AR.getAssets();
-    if (!a || !a[career]) return false;
-    return !!(a[career].modelBlobUrl && a[career].videoBlobUrl);
-  } catch(e){ return false; }
-}
+export function initButtons(){
+  const btns = Array.from(document.querySelectorAll('.career-btn'));
+  if (!btns || btns.length === 0) return;
 
-export function initButtons() {
-  if (inited) return;
-  inited = true;
-
-  // career buttons
-  const careerBtns = Array.from(document.querySelectorAll('.career-btn'));
-  careerBtns.forEach(btn => {
+  const map = {};
+  btns.forEach(btn => {
+    // ensure relative for absolute bar
+    btn.style.position = 'relative';
     const career = btn.dataset.career;
-    // initial state: enabled only if both model+video ready
-    setCareerButtonState(btn, isCareerReady(career));
+    const { wrap, inner } = createButtonBarElement();
+    wrap.setAttribute('data-bar-for', career);
+    btn.appendChild(wrap);
+    setButtonState(btn, false);
+    map[career] = { btn, inner, wrap };
 
-    btn.addEventListener('click', ensureSingle(() => {
-      AR.setNoScan(true);
+    // click -> AR.playCareer only if ready
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const isReady = btn.classList.contains('career-ready');
+      if (!isReady) return;
       AR.playCareer(career);
-    }));
+    });
   });
 
-  // listen career-load-progress events to toggle career buttons when both model+video ready
+  // listen loader events (career-load-progress)
   document.addEventListener('career-load-progress', (ev) => {
-    try {
-      const detail = ev && ev.detail;
-      if (!detail || !detail.career) return;
-      const career = detail.career;
-      const ready = isCareerReady(career);
-      const btn = document.querySelector(`.career-btn[data-career="${career}"]`);
-      if (btn) setCareerButtonState(btn, ready);
-    } catch(e) {}
+    const d = ev.detail || {};
+    const career = d.career;
+    if (!career || !map[career]) return;
+    // ensure numeric pct if provided
+    const pct = Math.max(0, Math.min(100, d.pct || 0));
+    try { map[career].inner.style.width = pct + '%'; } catch(e){}
   });
 
-  // back button
-  const backBtn = document.getElementById('backBtn');
-  if (backBtn) backBtn.addEventListener('click', ensureSingle(() => {
-    AR.pauseAndShowMenu();
-    AR.setNoScan(true);
-  }));
+  document.addEventListener('career-ready', (ev) => {
+    const career = ev.detail && ev.detail.career;
+    if (!career || !map[career]) return;
+    try { map[career].inner.style.width = '100%'; } catch(e){}
+    setButtonState(map[career].btn, true);
+  });
 
-  // return button
-  const returnBtn = document.getElementById('return-btn');
-  if (returnBtn) returnBtn.addEventListener('click', ensureSingle(() => {
-    AR.returnToLast();
-  }));
-
-  // game button (loads game.html overlay)
-  const gameBtn = document.getElementById('game-btn');
-  if (gameBtn) gameBtn.addEventListener('click', ensureSingle(async () => {
-    try {
-      AR.resetToIdle();
-      AR.setNoScan(true);
-      const careerMenu = document.getElementById('career-menu');
-      if (careerMenu) careerMenu.style.display = 'none';
-      const scanFrame = document.getElementById('scan-frame');
-      if (scanFrame) scanFrame.style.display = 'none';
-
-      let overlay = document.getElementById('game-overlay');
-      if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'game-overlay';
-        overlay.style.position = 'fixed';
-        overlay.style.inset = '0';
-        overlay.style.zIndex = '9999';
-        overlay.style.background = 'transparent';
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'stretch';
-        overlay.style.justifyContent = 'stretch';
-        document.body.appendChild(overlay);
-      }
-
-      const res = await fetch('game.html');
-      if (!res.ok) throw new Error('game.html not found');
-      const htmlText = await res.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlText, 'text/html');
-
-      // copy CSS links if missing
-      const links = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
-      links.forEach(link => {
-        const href = link.getAttribute('href');
-        if (!href) return;
-        if (!document.querySelector(`link[rel="stylesheet"][href="${href}"]`)) {
-          const newLink = document.createElement('link');
-          newLink.rel = 'stylesheet';
-          newLink.href = href;
-          document.head.appendChild(newLink);
+  // reflect already loaded assets (if AR.getAssets present)
+  try {
+    const loaded = AR.getAssets ? AR.getAssets() : null;
+    if (loaded) {
+      Object.keys(loaded).forEach(c => {
+        const a = loaded[c] || {};
+        if (a.modelBlobUrl && a.videoBlobUrl && map[c]) {
+          setButtonState(map[c].btn, true);
+          map[c].inner.style.width = '100%';
         }
       });
-
-      overlay.innerHTML = doc.body.innerHTML;
-
-      let closeBtn = overlay.querySelector('#game-close-btn');
-      if (!closeBtn) {
-        closeBtn = document.createElement('button');
-        closeBtn.id = 'game-close-btn';
-        closeBtn.textContent = '✕';
-        Object.assign(closeBtn.style, {
-          position: 'fixed',
-          left: '12px',
-          top: '12px',
-          zIndex: '10010',
-          padding: '8px 10px',
-          borderRadius: '8px',
-          border: 'none',
-          background: 'rgba(0,0,0,0.6)',
-          color: '#00ffff',
-          cursor: 'pointer',
-          fontSize: '16px'
-        });
-        overlay.appendChild(closeBtn);
-      }
-
-      // inject game script module (fresh)
-      const existingScript = document.querySelector('script[data-game-module]');
-      if (existingScript) try { existingScript.remove(); } catch(e){}
-      const s = document.createElement('script');
-      s.type = 'module';
-      s.src = 'js/game.js?ts=' + Date.now();
-      s.setAttribute('data-game-module','1');
-      document.body.appendChild(s);
-
-      // close handler
-      closeBtn.addEventListener('click', () => {
-        try {
-          const vid = overlay.querySelector('video');
-          if (vid && vid.srcObject) {
-            try {
-              const tracks = vid.srcObject.getTracks();
-              tracks.forEach(t=>t.stop());
-            } catch(e){ console.warn('stop tracks err', e); }
-            try { vid.srcObject = null; } catch(e){}
-          }
-        } catch(e){ console.warn(e); }
-        try { overlay.remove(); } catch(e){}
-        const scr = document.querySelector('script[data-game-module]');
-        if (scr) try { scr.remove(); } catch(e){}
-        const scoreOv = document.getElementById('score-overlay');
-        if (scoreOv) try { scoreOv.remove(); } catch(e){}
-        document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
-        try { AR.resetToIdle(); } catch(e){}
-        if (careerMenu) careerMenu.style.display = 'flex';
-        const careerActions = document.getElementById('career-actions');
-        if (careerActions) careerActions.style.display = 'flex';
-        if (backBtn) backBtn.style.display = 'none';
-        const returnBtn2 = document.getElementById('return-btn');
-        if (returnBtn2) returnBtn2.style.display = 'none';
-        AR.setNoScan(true);
-        const scanFrame2 = document.getElementById('scan-frame');
-        if (scanFrame2) scanFrame2.style.display = 'none';
-      });
-
-    } catch (e) {
-      console.error('failed loading game.html', e);
-      alert('ไม่สามารถโหลดเกมได้ — ตรวจสอบไฟล์ game.html และ js/game.js');
-      const careerMenu = document.getElementById('career-menu');
-      if (careerMenu) careerMenu.style.display = 'flex';
-      const careerActions = document.getElementById('career-actions');
-      if (careerActions) careerActions.style.display = 'flex';
-      try { AR.resetToIdle(); } catch(e){}
     }
-  }));
+  } catch(e){}
 }
