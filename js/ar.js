@@ -134,7 +134,15 @@ function loadGLTF(blobUrl) {
       const dr = ensureDracoInitialized();
       if (dr) loader.setDRACOLoader(dr);
     } catch(e){}
-    loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
+    loader.load(blobUrl, (gltf) => {
+      try {
+        if (gltf && gltf.scene) {
+          gltf.scene.userData = gltf.scene.userData || {};
+          gltf.scene.userData._clips = gltf.animations || [];
+        }
+      } catch(e){}
+      resolve(gltf);
+    }, undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
   });
 }
 function makeVideoElem(blobUrl) {
@@ -236,18 +244,21 @@ function attachContentToAnchor(gltf, video) {
   mixer = null;
 
   if (gltf && gltf.scene) {
-    gltfModel = gltf.scene;
+    const sceneObj = gltf.scene;
+    gltfModel = sceneObj;
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     gltfModel.scale.set(0.4,0.4,0.4);
     gltfModel.position.set(-0.25, -0.45, 0.05);
     gltfModel.visible = false;
     try { anchor && anchor.group && anchor.group.add(gltfModel); } catch(e){}
     try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
-    if (gltf.animations && gltf.animations.length > 0) {
+
+    // animations: prefer explicit gltf.animations, fallback to preserved clips on the scene
+    const animations = (gltf.animations && gltf.animations.length > 0) ? gltf.animations : (sceneObj.userData && Array.isArray(sceneObj.userData._clips) ? sceneObj.userData._clips : null);
+    if (animations && animations.length > 0) {
       mixer = new THREE.AnimationMixer(gltfModel);
-      // ensure actions are prepared but paused initially and store them for later control
       const actions = [];
-      gltf.animations.forEach(c => {
+      animations.forEach(c => {
         try {
           const action = mixer.clipAction(c);
           action.reset();
@@ -257,8 +268,10 @@ function attachContentToAnchor(gltf, video) {
         } catch(e) { console.warn('action setup err', e); }
       });
       try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData._actions = actions; } catch(e){}
-      // paused until we explicitly resume (set timeScale = 1)
+      // paused until explicitly resumed
       mixer.timeScale = 0;
+      try { mixer.update(0); } catch(e){}
+      try { console.debug('attachContentToAnchor: actions prepared', { career: playingCareer, actions: gltfModel.userData._actions ? gltfModel.userData._actions.length : 0, hasMixer: !!mixer }); } catch(e){}
     }
     try { makeModelRenderPriority(gltfModel); } catch(e){}
   }
@@ -586,6 +599,24 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
+  // observe career menu visibility and toggle scan-frame accordingly
+  (function observeMenuScanFrameBehavior(){
+    try {
+      const cm = careerMenu();
+      if (!cm) return;
+      const apply = () => {
+        try {
+          const cs = window.getComputedStyle(cm);
+          const visible = cs && cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
+          setNoScan(visible);
+        } catch(e){}
+      };
+      const mo = new MutationObserver(apply);
+      mo.observe(cm, { attributes: true, childList: true, subtree: true });
+      apply();
+    } catch(e){}
+  })();
+
   // try ensure Computer content (will fallback-fetch if not preloaded)
   await ensureContentForCareer('Computer');
 
@@ -617,19 +648,52 @@ export async function initAndStart(containerElement) {
       }
 
       const startNow = async () => {
-        // ensure model animation actions are reset & playing, then un-pause mixer
         try {
-          if (gltfModel && gltfModel.userData && Array.isArray(gltfModel.userData._actions)) {
+          try { console.debug('startNow entry', { career: playingCareer, hasGltf: !!gltfModel, hasMixer: !!mixer, actions: (gltfModel && gltfModel.userData && gltfModel.userData._actions) ? gltfModel.userData._actions.length : 0, videoPaused: videoElem ? videoElem.paused : null }); } catch(e){}
+          // if actions already prepared, reset/play them
+          if (gltfModel && gltfModel.userData && Array.isArray(gltfModel.userData._actions) && gltfModel.userData._actions.length) {
             gltfModel.userData._actions.forEach(a => {
               try { a.reset(); a.play(); a.enabled = true; a.setEffectiveWeight && a.setEffectiveWeight(1); } catch(e){}
             });
+          } else {
+            // sometimes the model was attached earlier but mixer wasn't recreated — attempt to (re)create from preserved clips
+            try {
+              if (!mixer && gltfModel && gltfModel.userData && Array.isArray(gltfModel.userData._clips) && gltfModel.userData._clips.length) {
+                mixer = new THREE.AnimationMixer(gltfModel);
+                const actions = [];
+                gltfModel.userData._clips.forEach(c => {
+                  try {
+                    const action = mixer.clipAction(c);
+                    action.reset();
+                    action.play();
+                    action.enabled = true;
+                    actions.push(action);
+                  } catch(e) { console.warn('recreate action err', e); }
+                });
+                try { gltfModel.userData._actions = actions; } catch(e){}
+                mixer.timeScale = 0;
+                try { mixer.update(0); } catch(e){}
+              }
+            } catch(e) { console.warn('startNow recreate err', e); }
           }
         } catch(e) { console.warn('startNow actions err', e); }
-        if (mixer) try { mixer.timeScale = 1; } catch(e){}
+
+        if (mixer) {
+          try { mixer.timeScale = 1; } catch(e){}
+          try { mixer.update(0); } catch(e){}
+          try { console.debug('startNow before RAF: mixer updated', { career: playingCareer }); } catch(e){}
+        }
+
+        // ensure at least one RAF happens so three.js can bind skins/skeletons
+        await new Promise(r => requestAnimationFrame(r));
+
+        try { renderer && renderer.render && renderer.render(scene, camera); } catch(e){}
+
         if (videoElem) {
           try {
             if (waitingForMarkerPlay) try{ videoElem.currentTime = 0; }catch(e){}
-            await videoElem.play();
+            await videoElem.play().catch(()=>{ videoElem.muted = true; videoElem.play().catch(()=>{}); });
+            try { console.debug('startNow video.play invoked', { career: playingCareer, muted: videoElem.muted, paused: videoElem.paused }); } catch(e){}
           } catch(err){
             try { videoElem.muted = true; await videoElem.play(); } catch(e){}
           }
@@ -637,7 +701,8 @@ export async function initAndStart(containerElement) {
       };
 
       if (waitingForMarkerPlay || (videoElem && videoElem.paused && playingCareer)) {
-        setTimeout(()=> { startNow(); }, 1000);
+        // give a short delay (one RAF) before starting to ensure renderer has processed attachments
+        requestAnimationFrame(()=> { startNow(); });
         waitingForMarkerPlay = false;
         return;
       }
@@ -778,12 +843,11 @@ export async function playCareer(career) {
     try { ensureAttachedAndVisible(); } catch(e){}
     try { if (gltfModel) gltfModel.visible = true; } catch(e){}
     try { if (videoMesh) videoMesh.visible = true; } catch(e){}
-    setTimeout(()=> {
-      if (mixer) try { mixer.timeScale = 1; } catch(e){}
-      if (videoElem) try { videoElem.currentTime = 0; videoElem.play(); } catch(err){
-        try { videoElem.muted = true; videoElem.play(); } catch(e){}
-      }
-    }, 1000);
+    // wait a couple of frames so Three.js can bind skeletons and apply initial transforms
+    await new Promise(r => requestAnimationFrame(r));
+    await new Promise(r => requestAnimationFrame(r));
+    if (mixer) try { mixer.timeScale = 1; } catch(e){}
+    if (videoElem) try { videoElem.currentTime = 0; videoElem.play().catch(()=>{ videoElem.muted = true; videoElem.play().catch(()=>{}); }); } catch(err){}
     waitingForMarkerPlay = false;
   } else {
     waitingForMarkerPlay = true;
