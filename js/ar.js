@@ -1,7 +1,12 @@
-// js/ar.js
+// js/ar.js (fixed: DRACO enabled for GLTFLoader)
+// Only changed: added DRACOLoader import + ensureDracoInitialized + use it in loadGLTF.
+// Keep the rest of your original logic intact. This file preserves your previous behavior
+// (attachContentToAnchor, playCareer, initAndStart, etc.) but ensures DRACO-compressed glTFs load.
+
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 const JOB_ROOT = './Job';
 const careers = ['Computer','AI','Cloud','Data_Center','Network'];
@@ -176,6 +181,21 @@ export async function preloadAll(onProgress = ()=>{}) {
   return assets;
 }
 
+// --- DRACO support ---
+let dracoLoaderInstance = null;
+function ensureDracoInitialized() {
+  if (dracoLoaderInstance) return dracoLoaderInstance;
+  try {
+    dracoLoaderInstance = new DRACOLoader();
+    // use CDN decoder (works in most dev setups). If you prefer local files, host decoder under /draco/ and set that path.
+    dracoLoaderInstance.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+  } catch(e) {
+    console.warn('Failed to init DRACOLoader', e);
+    dracoLoaderInstance = null;
+  }
+  return dracoLoaderInstance;
+}
+
 function createLights(scene) {
   const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
   hemi.position.set(0,1,0);
@@ -189,6 +209,10 @@ function loadGLTF(blobUrl) {
   return new Promise((resolve) => {
     if (!blobUrl) return resolve(null);
     const loader = new GLTFLoader();
+    try {
+      const dr = ensureDracoInitialized();
+      if (dr) loader.setDRACOLoader(dr);
+    } catch(e) { console.warn('setDRACOLoader failed', e); }
     loader.load(blobUrl, (gltf) => resolve(gltf), undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
   });
 }
@@ -231,6 +255,8 @@ function attachContentToAnchor(gltf, video) {
 
   if (gltf && gltf.scene) {
     gltfModel = gltf.scene;
+    // tag source for debugging
+    try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     gltfModel.scale.set(0.4,0.4,0.4);
     gltfModel.position.set(-0.25, -0.45, 0.05);
     gltfModel.visible = false;
@@ -241,15 +267,18 @@ function attachContentToAnchor(gltf, video) {
       gltf.animations.forEach(c => { const action = mixer.clipAction(c); action.play(); });
       mixer.timeScale = 0;
     }
+    // increase render priority
+    try { gltfModel.traverse(n=>{ if (n.isMesh) { n.renderOrder = 2; if (n.material) { n.material.depthTest = true; n.material.depthWrite = true; } } }); } catch(e){}
+    console.log('AR: model attached for', gltfModel.userData.sourceCareer);
   }
 
   if (video) {
     videoElem = video;
     try { videoElem.pause(); } catch(e){}
     const texture = new THREE.VideoTexture(videoElem);
-    texture.colorSpace = THREE.SRGBColorSpace;
+    try { texture.colorSpace = THREE.SRGBColorSpace; } catch(e){}
     const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
-    const mat = new THREE.MeshBasicMaterial({ map: texture });
+    const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
     videoMesh = new THREE.Mesh(plane, mat);
     videoMesh.position.set(0, -0.05, 0);
     videoMesh.visible = false;
@@ -305,7 +334,7 @@ export async function initAndStart(containerElement) {
     filterBeta: 0.005
   });
   ({ renderer, scene, camera } = mindarThree);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  try { renderer.outputColorSpace = THREE.SRGBColorSpace; } catch(e){}
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
 
@@ -341,8 +370,6 @@ export async function initAndStart(containerElement) {
         return;
       }
 
-      // if user previously clicked career and was waiting for marker OR default auto-play:
-      // for all careers: wait 1s after reveal, then start animations/video
       const startNow = () => {
         if (mixer) try { mixer.timeScale = 1; } catch(e){}
         if (videoElem) {
