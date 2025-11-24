@@ -177,6 +177,15 @@ export async function preloadAll(onMainProgress = ()=>{}) {
     }
   }
 
+  // If loop completed without finding another ready career, still allow start if Computer is ready
+  try {
+    if (!otherReady && isCareerReady('Computer')) {
+      // allow user to start with Computer alone (background will continue)
+      onMainProgress(100);
+      emit('start-ready', { computer: 'Computer', other: null });
+    }
+  } catch(e){}
+
   // 3) game sfx (only win.mp3 for your repo)
   try {
     const s = 'game_assets/sfx/win.mp3';
