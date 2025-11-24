@@ -102,97 +102,60 @@ export async function preloadAll(onMainProgress = ()=>{}) {
     onMainProgress(0);
     emit('loader-phase', { phase:'computer-start' });
     // marker
-      // Load each career folder sequentially (model then video) to avoid many parallel requests.
-      for (const career of careers) {
-        if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-        const a = assets[career];
-        try {
-          // model
-          if (!a.modelBlobUrl) {
-            const mm = await tryFind(career, candidates[career].model);
-            if (mm) {
-              a.modelBlobUrl = URL.createObjectURL(mm.blob);
-              document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 50, file: `${JOB_ROOT}/${career}/${mm.url}`, type: 'model' } }));
-            } else {
-              document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 0, file: null, type: 'model', ok:false } }));
-            }
-          }
+    const mk = await tryFind('Computer', candidates['Computer'].marker);
+    if (mk) {
+      assets['Computer'].markerBlobUrl = URL.createObjectURL(mk.blob);
+      emit('career-load-progress', { career:'Computer', pct:5, type:'marker' });
+    } else {
+      emit('career-load-progress', { career:'Computer', pct:5, type:'marker', ok:false });
+    }
 
-          // video
-          if (!a.videoBlobUrl) {
-            const mv = await tryFind(career, candidates[career].video);
-            if (mv) {
-              a.videoBlobUrl = URL.createObjectURL(mv.blob);
-              document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: `${JOB_ROOT}/${career}/${mv.url}`, type: 'video' } }));
-            } else {
-              document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: a.modelBlobUrl ? 50 : 0, file: null, type: 'video', ok:false } }));
-            }
-          }
+    // model
+    const mm = await tryFind('Computer', candidates['Computer'].model);
+    if (mm) {
+      assets['Computer'].modelBlobUrl = URL.createObjectURL(mm.blob);
+      emit('career-load-progress', { career:'Computer', pct:50, type:'model' });
+    } else {
+      emit('career-load-progress', { career:'Computer', pct:50, type:'model', ok:false });
+    }
+    onMainProgress(50);
 
-          if (a.modelBlobUrl && a.videoBlobUrl) {
-            document.dispatchEvent(new CustomEvent('career-ready', { detail: { career } }));
-          }
-        } catch(e) {
-          // continue to next career on error
-        }
-      }
+    // video
+    const mv = await tryFind('Computer', candidates['Computer'].video);
+    if (mv) {
+      assets['Computer'].videoBlobUrl = URL.createObjectURL(mv.blob);
+      emit('career-load-progress', { career:'Computer', pct:95, type:'video' });
+    } else {
+      emit('career-load-progress', { career:'Computer', pct:95, type:'video', ok:false });
+    }
 
-      // Load game assets sequentially (manifest then listed assets)
-      try {
-        const mfRes = await fetch('game_assets/manifest.json');
-        if (mfRes && mfRes.ok) {
-          const mf = await mfRes.json();
-          for (const item of mf) {
-            if (item.image) {
-              try {
-                const r = await fetch(encodeURI(`game_assets/cards/${item.image}`));
-                if (r && r.ok) { const b = await r.blob(); gameAssets[`cards/${item.image}`] = URL.createObjectURL(b); }
-              } catch(e){}
-            }
-            if (item.audioWord) {
-              try {
-                const r = await fetch(encodeURI(`game_assets/audio/${item.audioWord}`));
-                if (r && r.ok) { const b = await r.blob(); gameAssets[`audio/${item.audioWord}`] = URL.createObjectURL(b); }
-              } catch(e){}
-            }
-            if (item.audioMeaning) {
-              try {
-                const r = await fetch(encodeURI(`game_assets/audio/${item.audioMeaning}`));
-                if (r && r.ok) { const b = await r.blob(); gameAssets[`audio/${item.audioMeaning}`] = URL.createObjectURL(b); }
-              } catch(e){}
-            }
-          }
-        }
-      } catch(e){}
+    const compReady = !!(assets['Computer'].modelBlobUrl && assets['Computer'].videoBlobUrl);
+    // update main progress after Computer stage (base)
+    if (compReady) onMainProgress(60);
+    else onMainProgress(40);
+  } catch(e) {
+    console.warn('preloadAll computer err', e);
+    onMainProgress(20);
+  }
 
-      // simple sfx list sequential
-      try {
-        const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
-        for (const f of sfx) {
-          try {
-            const r = await fetch(encodeURI(`game_assets/sfx/${f}`));
-            if (!r || !r.ok) continue;
-            const b = await r.blob();
-            gameAssets[`sfx/${f}`] = URL.createObjectURL(b);
-          } catch(e){}
-        }
-      } catch(e){}
-
-      assets.gameAssets = gameAssets;
-      return;
-      // try load model+video quietly
-      const mm = await tryFind(c, candidates[c].model);
-      if (mm) assets[c].modelBlobUrl = URL.createObjectURL(mm.blob);
-      const mv = await tryFind(c, candidates[c].video);
-      if (mv) assets[c].videoBlobUrl = URL.createObjectURL(mv.blob);
-
-      const ready = !!(assets[c].modelBlobUrl && assets[c].videoBlobUrl);
-      emit('career-load-progress', { career:c, pct: ready ? 100 : 0, type:'all' });
+  // 2) other careers sequentially until at least one is ready
+  let otherReady = null;
+  const others = careers.filter(x=> x !== 'Computer');
+  const steps = others.length;
+  // distribute progress from 60 -> 95 across other careers
+  for (let idx=0; idx<others.length; idx++) {
+    const c = others[idx];
+    try {
+      // load the entire folder (marker/model/video) for this career sequentially
+      const res = await ensureCareerAssets(c, (pct, file, type) => {
+        // forward per-career progress events (ensureCareerAssets already emits career-load-progress)
+      });
+      const ready = !!(res && res.modelBlobUrl && res.videoBlobUrl);
       if (ready && !otherReady) {
         otherReady = c;
-        emit('career-ready', { career:c });
       }
-    } catch(e) {}
+    } catch(e) { console.warn('preloadAll career load err', e); }
+
     // update main progress monotonic: map idx to 60..95 range
     try {
       const base = 60;
