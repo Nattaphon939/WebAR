@@ -36,6 +36,9 @@ async function main(){
     try { if (AR && AR.preloadRemaining) AR.preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
   });
 
+  // initialize UI early so button listeners receive career-load-progress events
+  try { initUI(); } catch(e){}
+
   // main preload (will emit 'career-load-progress' and 'start-ready' events)
   await preloadAll((pct) => {
     setMainProgress(pct);
