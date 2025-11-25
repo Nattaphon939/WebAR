@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { ensureCareerAssets, getAssets as getLoaderAssets } from './loader.js';
 
 const JOB_ROOT = './Job';
 const careers = ['Computer','AI','Cloud','Data_Center','Network'];
@@ -14,8 +15,9 @@ const candidates = {
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
-const assets = {};      // per-career { modelBlobUrl, videoBlobUrl, markerBlobUrl }
-const gameAssets = {};
+// use loader's shared assets object to avoid duplicate downloads
+const assets = getLoaderAssets();      // per-career { modelBlobUrl, videoBlobUrl, markerBlobUrl }
+const gameAssets = assets.gameAssets = assets.gameAssets || {};
 
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
@@ -350,76 +352,13 @@ function attachContentToAnchor(gltf, video) {
   } catch(e){}
 }
 
-/* ensureCareerLoaded (sequential per career folder) */
-export async function ensureCareerLoaded(career, onProgress = ()=>{}) {
-  if (!career || !careers.includes(career)) throw new Error('invalid career ' + career);
-  if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null, markerBlobUrl: null };
-
-  const a = assets[career];
-  const alreadyModel = !!(a.modelBlobUrl);
-  const alreadyVideo = !!(a.videoBlobUrl);
-
-  if (alreadyModel && alreadyVideo) {
-    onProgress(100, null, null);
-    document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: null, type: 'all' } }));
-    return assets[career];
-  }
-
-  const files = [];
-  if (career === 'Computer') {
-    files.push({ url: `${JOB_ROOT}/Computer/marker.mind`, type: 'marker', key: 'markerBlobUrl' });
-  }
-  files.push({ url: `${JOB_ROOT}/${career}/${candidates[career].model[0]}`, type: 'model', key: 'modelBlobUrl' });
-  files.push({ url: `${JOB_ROOT}/${career}/${candidates[career].video[0]}`, type: 'video', key: 'videoBlobUrl' });
-
-  const totalFiles = files.length;
-  for (let i=0;i<files.length;i++){
-    const it = files[i];
-    if (assets[career][it.key]) {
-      const pctOverall = Math.round(((i+1) / totalFiles) * 100);
-      try { onProgress(pctOverall, it.url, it.type); } catch(e){}
-      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type } }));
-      continue;
-    }
-    try {
-      const blob = await fetchWithProgress(it.url, (p)=> {
-        const base = (i) / totalFiles * 100;
-        const overall = Math.round(base + (p/totalFiles));
-        try { onProgress(overall, it.url, it.type); } catch(e){}
-        document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: overall, file: it.url, type: it.type } }));
-      });
-      const blobUrl = URL.createObjectURL(blob);
-      assets[career][it.key] = blobUrl;
-      const pctOverall = Math.round(((i+1) / totalFiles) * 100);
-      try { onProgress(pctOverall, it.url, it.type); } catch(e){}
-      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type } }));
-    } catch (e) {
-      // fallback: try fetchFirstAvailable for that type (silent)
-      try {
-        if (it.type === 'model') {
-          const fallback = await fetchFirstAvailable(career, candidates[career].model);
-          if (fallback) assets[career].modelBlobUrl = fallback;
-        } else if (it.type === 'video') {
-          const fallback = await fetchFirstAvailable(career, candidates[career].video);
-          if (fallback) assets[career].videoBlobUrl = fallback;
-        } else if (it.type === 'marker') {
-          // ignore
-        }
-      } catch(err){}
-      assets[career][it.key] = assets[career][it.key] || null;
-      const pctOverall = Math.round(((i+1) / totalFiles) * 100);
-      try { onProgress(pctOverall, it.url, it.type, false); } catch(e){}
-      document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: pctOverall, file: it.url, type: it.type, ok:false } }));
-    }
-  }
-  return assets[career];
-}
+/* Use loader's ensureCareerAssets to load career folders (keeps single source of truth) */
 
 /* preloadCritical simplified wrapper (keeps API) */
 export async function preloadCritical(onProgress = ()=>{}) {
   try { onProgress({ phase:'phaseA-start', pct:0 }); } catch(e){}
   try {
-    await ensureCareerLoaded('Computer', (pct, file, type) => {
+    await ensureCareerAssets('Computer', (pct, file, type) => {
       try { onProgress({ phase:'phaseA-career', career:'Computer', pct, file, type, startReady:false }); } catch(e){}
     });
   } catch(e) { try { onProgress({ phase:'phaseA-error', pct: 10 }); } catch(e){} }
@@ -428,7 +367,7 @@ export async function preloadCritical(onProgress = ()=>{}) {
   for (let ci=0; ci<order.length; ci++) {
     const career = order[ci];
     try {
-      await ensureCareerLoaded(career, (pct, file, type) => {
+      await ensureCareerAssets(career, (pct, file, type) => {
         const doneCareers = ci + (pct/100);
         const overall = Math.round((doneCareers / order.length) * 100);
         try { onProgress({ phase:'phaseB-career', career, pct, file, type, overall }); } catch(e){}
@@ -850,14 +789,34 @@ export async function playCareer(career) {
 
   // ensure assets exist (fallback-fetch if needed) then attach
   if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-  try { await ensureCareerLoaded(career, ()=>{}); } catch(e){}
+  try { await ensureCareerAssets(career, ()=>{}); } catch(e){}
   try { await ensureContentForCareer(career); } catch(e){}
 
   const a = assets[career] || {};
-  const gltf = a.modelBlobUrl ? await loadGLTF(a.modelBlobUrl) : null;
-  const vid = a.videoBlobUrl ? makeVideoElem(a.videoBlobUrl) : null;
+  // reuse already-attached model/video when possible to avoid duplicate fetches
+  let shouldAttach = false;
+  // if current attached model belongs to another career, clear it first
+  if (gltfModel && gltfModel.userData && gltfModel.userData.sourceCareer !== career) {
+    clearAnchorContent(false);
+  }
 
-  attachContentToAnchor(gltf, vid);
+  // if we don't have a model attached for this career, try to attach from assets
+  if (!gltfModel && a.modelBlobUrl) {
+    try {
+      const g = await loadGLTF(a.modelBlobUrl);
+      attachContentToAnchor(g, null);
+      shouldAttach = true;
+    } catch(e){ console.warn('playCareer attach gltf err', e); }
+  }
+
+  // video: reuse existing videoElem if same src, otherwise create
+  if (!videoElem && a.videoBlobUrl) {
+    try {
+      const v = makeVideoElem(a.videoBlobUrl);
+      attachContentToAnchor(gltfModel ? { scene: gltfModel } : null, v);
+      shouldAttach = true;
+    } catch(e){ console.warn('playCareer attach video err', e); }
+  }
 
   playingCareer = career;
   lastCareer = career;
@@ -871,7 +830,7 @@ export async function playCareer(career) {
     await new Promise(r => requestAnimationFrame(r));
     await new Promise(r => requestAnimationFrame(r));
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
-    if (videoElem) try { videoElem.currentTime = 0; videoElem.play().catch(()=>{ videoElem.muted = true; videoElem.play().catch(()=>{}); }); } catch(err){}
+    if (videoElem) try { videoElem.currentTime = 0; await videoElem.play().catch(()=>{ videoElem.muted = true; videoElem.play().catch(()=>{}); }); } catch(err){}
     waitingForMarkerPlay = false;
   } else {
     waitingForMarkerPlay = true;

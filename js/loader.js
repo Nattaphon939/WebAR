@@ -18,11 +18,16 @@ function emit(name, detail={}) {
 }
 
 async function tryFind(career, list) {
+  // try fetching with a short timeout to avoid hanging the whole preload
+  const timeoutMs = 7000;
   for (const name of list || []) {
     if (!name) continue;
     const url = `${JOB_ROOT}/${career}/${name}`;
     try {
-      const r = await fetch(encodeURI(url));
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeoutMs);
+      const r = await fetch(encodeURI(url), { signal: controller.signal });
+      clearTimeout(id);
       if (!r || !r.ok) continue;
       const b = await r.blob();
       if (!b || b.size === 0) continue;
@@ -94,12 +99,15 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
   - emits 'career-load-progress' events for UI and 'start-ready' when Computer + another ready
 */
 export async function preloadAll(onMainProgress = ()=>{}) {
+  console.debug('loader.preloadAll: start');
   // initialize
   for (const c of careers) assets[c] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
+  try { onMainProgress(5); } catch(e){}
 
   // 1) Computer
   try {
     onMainProgress(0);
+    console.debug('loader.preloadAll: computer stage start');
     emit('loader-phase', { phase:'computer-start' });
     // marker
     const mk = await tryFind('Computer', candidates['Computer'].marker);
@@ -135,6 +143,7 @@ export async function preloadAll(onMainProgress = ()=>{}) {
     else onMainProgress(40);
   } catch(e) {
     console.warn('preloadAll computer err', e);
+    try { document.dispatchEvent(new CustomEvent('loader-error', { detail: { stage: 'computer', error: String(e) } })); } catch(e){}
     onMainProgress(20);
   }
 
@@ -154,7 +163,7 @@ export async function preloadAll(onMainProgress = ()=>{}) {
       if (ready && !otherReady) {
         otherReady = c;
       }
-    } catch(e) { console.warn('preloadAll career load err', e); }
+    } catch(e) { console.warn('preloadAll career load err', e); try { document.dispatchEvent(new CustomEvent('loader-error', { detail: { stage: c, error: String(e) } })); } catch(e){} }
 
     // update main progress monotonic: map idx to 60..95 range
     try {
@@ -195,7 +204,57 @@ export async function preloadAll(onMainProgress = ()=>{}) {
   } catch(e){}
 
   // final emit
+  console.debug('loader.preloadAll: done');
   emit('preload-done', { assets });
   onMainProgress(100);
   return assets;
+}
+
+/* preloadRemaining (background) */
+export async function preloadRemaining() {
+  const urls = [];
+  for (const career of careers) {
+    if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
+    const a = assets[career];
+    if (!a.modelBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
+    if (!a.videoBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
+  }
+  try {
+    const mf = await fetch('game_assets/manifest.json');
+    if (mf && mf.ok) {
+      const manifest = await mf.json();
+      for (const item of manifest) {
+        if (item.image) urls.push(`game_assets/cards/${item.image}`);
+        if (item.audioWord) urls.push(`game_assets/audio/${item.audioWord}`);
+        if (item.audioMeaning) urls.push(`game_assets/audio/${item.audioMeaning}`);
+      }
+    }
+  } catch(e){}
+  const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
+  for (const f of sfx) urls.push(`game_assets/sfx/${f}`);
+  const final = Array.from(new Set(urls));
+  await Promise.all(final.map(async u => {
+    try {
+      const r = await fetch(encodeURI(u));
+      if (!r.ok) return;
+      const blob = await r.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      if (u.startsWith(`${JOB_ROOT}/`)) {
+        const parts = u.split('/');
+        const career = parts[2];
+        const low = u.toLowerCase();
+        if (low.endsWith('.glb') || low.endsWith('.gltf')) {
+          assets[career].modelBlobUrl = assets[career].modelBlobUrl || blobUrl;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'model' } }));
+        } else {
+          assets[career].videoBlobUrl = assets[career].videoBlobUrl || blobUrl;
+          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'video' } }));
+        }
+      } else if (u.startsWith('game_assets/')) {
+        assets.gameAssets = assets.gameAssets || {};
+        assets.gameAssets[u.replace('game_assets/','')] = blobUrl;
+      }
+    } catch(e){}
+  }));
+  return;
 }

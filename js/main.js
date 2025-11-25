@@ -1,5 +1,6 @@
 // /WEB/js/main.js  (replace)
-import { preloadAll } from './loader.js';
+console.debug('main.js loaded');
+import { preloadAll, preloadRemaining } from './loader.js';
 import { initUI } from './ui.js';
 import * as AR from './ar.js';
 
@@ -32,17 +33,37 @@ async function main(){
       setMainProgress(100);
       loadingText.textContent = 'พร้อมเริ่มต้น — แตะเพื่อเริ่ม';
     }
-    // start background Phase B via AR.preloadRemaining if available
-    try { if (AR && AR.preloadRemaining) AR.preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
+    // start background Phase B via loader.preloadRemaining
+    try { preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
   });
 
   // main preload (will emit 'career-load-progress' and 'start-ready' events)
-  await preloadAll((pct) => {
+  console.debug('main: calling preloadAll');
+  // race preload with a timeout so UI doesn't hang if network requests stall
+  const timeoutMs = 8000;
+  const preloadPromise = preloadAll((pct) => {
+    console.debug('main: preloadAll progress', pct);
     setMainProgress(pct);
     if (pct >= 100) {
       loadingText.textContent = 'โหลดทรัพยากรเสร็จแล้ว';
     }
   });
+  const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), timeoutMs));
+  const res = await Promise.race([preloadPromise, timeoutPromise]).catch(e => { console.error('preloadAll rejected', e); return { error: e }; });
+  console.debug('main: preloadAll returned', res);
+
+  // If preload timed out, show start button and continue background loading
+  if (res && res.timedOut) {
+    console.warn('preloadAll timed out — showing Start and continuing background load');
+    setMainProgress(30);
+    loadingText.textContent = 'เครือข่ายช้า — พร้อมเริ่มในโหมดประหยัด';
+    if (startButton) {
+      startButton.style.display = 'inline-block';
+      startButton.disabled = false;
+      startButton.textContent = 'แตะเพื่อเริ่ม AR';
+    }
+    try { preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
+  }
 
   // when user clicks start: request camera, init AR, then wire UI
   if (!startButton) return;
