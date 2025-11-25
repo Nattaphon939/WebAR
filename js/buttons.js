@@ -1,5 +1,6 @@
 // /WEB/js/buttons.js  (REPLACE FULL)
 import * as AR from './ar.js';
+import { getAssets as getLoaderAssets } from './loader.js';
 
 /* create wide progress bar at bottom-center inside button */
 function createButtonBarElement() {
@@ -89,7 +90,7 @@ export function initButtons(){
 
   // reflect already loaded assets (if AR.getAssets present)
   try {
-    const loaded = AR.getAssets ? AR.getAssets() : null;
+    const loaded = (typeof getLoaderAssets === 'function') ? getLoaderAssets() : (AR.getAssets ? AR.getAssets() : null);
     if (loaded) {
       Object.keys(loaded).forEach(c => {
         const a = loaded[c] || {};
