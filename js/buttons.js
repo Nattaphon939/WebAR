@@ -2,6 +2,9 @@
 import * as AR from './ar.js';
 import { getAssets as getLoaderAssets } from './loader.js';
 
+// module-level map so other functions (refresh) can access button elements
+let _map = {};
+
 /* create wide progress bar at bottom-center inside button */
 function createButtonBarElement() {
   const wrap = document.createElement('div');
@@ -71,6 +74,9 @@ export function initButtons(){
     });
   });
 
+  // store internal map for refresh use
+  _map = map;
+
   // listen loader events (career-load-progress)
   document.addEventListener('career-load-progress', (ev) => {
     const d = ev.detail || {};
@@ -87,6 +93,22 @@ export function initButtons(){
     try { map[career].inner.style.width = '100%'; } catch(e){}
     setButtonState(map[career].btn, true);
   });
+
+  // refresh buttons from loader assets when menu shown or on demand
+  async function refreshFromAssets() {
+    try {
+      const loaded = (typeof getLoaderAssets === 'function') ? getLoaderAssets() : null;
+      if (!loaded) return;
+      Object.keys(map).forEach(c => {
+        const a = loaded[c] || {};
+        const pct = (a.modelBlobUrl && a.videoBlobUrl) ? 100 : (a.modelBlobUrl || a.videoBlobUrl) ? 50 : 0;
+        try { map[c].inner.style.width = pct + '%'; } catch(e){}
+        setButtonState(map[c].btn, pct === 100);
+      });
+    } catch(e){}
+  }
+
+  document.addEventListener('show-career-menu', ()=> { refreshFromAssets(); });
 
   // reflect already loaded assets (if AR.getAssets present)
   try {
