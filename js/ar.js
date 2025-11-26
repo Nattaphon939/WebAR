@@ -544,27 +544,18 @@ export async function initAndStart(containerElement) {
     filterBeta: 0.005
   });
   ({ renderer, scene, camera } = mindarThree);
+  try {
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const w = (containerElement && containerElement.clientWidth) ? containerElement.clientWidth : window.innerWidth;
+    const h = (containerElement && containerElement.clientHeight) ? containerElement.clientHeight : window.innerHeight;
+    renderer.setSize(w, h, false);
+    if (renderer.domElement) renderer.domElement.style.display = 'block';
+  } catch(e) { console.warn('renderer sizing failed', e); }
   try { renderer.outputColorSpace = THREE.SRGBColorSpace; } catch(e){}
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
-
-  // observe career menu visibility and toggle scan-frame accordingly
-  (function observeMenuScanFrameBehavior(){
-    try {
-      const cm = careerMenu();
-      if (!cm) return;
-      const apply = () => {
-        try {
-          const cs = window.getComputedStyle(cm);
-          const visible = cs && cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
-          setNoScan(visible);
-        } catch(e){}
-      };
-      const mo = new MutationObserver(apply);
-      mo.observe(cm, { attributes: true, childList: true, subtree: true });
-      apply();
-    } catch(e){}
-  })();
+  // Always hide the visual scan-frame (application requested)
+  try { setNoScan(true); } catch(e){}
 
   // try ensure Computer content (will fallback-fetch if not preloaded)
   await ensureContentForCareer('Computer');
