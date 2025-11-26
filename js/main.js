@@ -22,19 +22,37 @@ function setMainProgress(pct) {
 async function main(){
   setMainProgress(0);
 
-  // listen for loader events - career-level progress shown as small bars via buttons.js
-  document.addEventListener('start-ready', (ev) => {
-    // show Start button (user can now press to initialize AR)
-    if (startButton) {
-      startButton.style.display = 'inline-block';
-      startButton.disabled = false;
-      startButton.textContent = 'แตะเพื่อเริ่ม AR';
-      // Phase A complete for UI
-      setMainProgress(100);
-      loadingText.textContent = 'พร้อมเริ่มต้น — แตะเพื่อเริ่ม';
-    }
-    // start background Phase B via loader.preloadRemaining
-    try { preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
+  // listen for loader events
+  // Use Computer career progress to drive the main loading bar
+  document.addEventListener('career-load-progress', (ev) => {
+    try {
+      const d = ev.detail || {};
+      if (d.career === 'Computer') {
+        // map career pct (marker/model/video emissions) directly to main bar
+        const pct = d.pct || 0;
+        setMainProgress(pct);
+        if (pct >= 95) loadingText.textContent = 'เตรียมคอนเท้นด้าน AR เสร็จแล้ว';
+      }
+    } catch(e){}
+  });
+
+  // show Start only when Computer is fully ready (career-ready)
+  document.addEventListener('career-ready', (ev) => {
+    try {
+      const d = ev.detail || {};
+      console.debug('main: career-ready', d);
+      if (d.career === 'Computer') {
+        if (startButton) {
+          startButton.style.display = 'inline-block';
+          startButton.disabled = false;
+          startButton.textContent = 'แตะเพื่อเริ่ม AR';
+          setMainProgress(100);
+          loadingText.textContent = 'พร้อมเริ่มต้น — แตะเพื่อเริ่ม';
+        }
+        // start background Phase B via loader.preloadRemaining
+        try { preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
+      }
+    } catch(e){}
   });
 
   // main preload (will emit 'career-load-progress' and 'start-ready' events)
@@ -54,14 +72,9 @@ async function main(){
 
   // If preload timed out, show start button and continue background loading
   if (res && res.timedOut) {
-    console.warn('preloadAll timed out — showing Start and continuing background load');
+    console.warn('preloadAll timed out — continuing background load; Start will appear when Computer ready');
     setMainProgress(30);
-    loadingText.textContent = 'เครือข่ายช้า — พร้อมเริ่มในโหมดประหยัด';
-    if (startButton) {
-      startButton.style.display = 'inline-block';
-      startButton.disabled = false;
-      startButton.textContent = 'แตะเพื่อเริ่ม AR';
-    }
+    loadingText.textContent = 'เครือข่ายช้า — กำลังเตรียมคอนเท้น กรุณารอสักครู่';
     try { preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
   }
 

@@ -138,6 +138,10 @@ export async function preloadAll(onMainProgress = ()=>{}) {
     }
 
     const compReady = !!(assets['Computer'].modelBlobUrl && assets['Computer'].videoBlobUrl);
+    // Emit career-ready for Computer so UI can react (main now shows Start on career-ready)
+    if (compReady) {
+      try { document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: 'Computer', assets: { model: assets['Computer'].modelBlobUrl, video: assets['Computer'].videoBlobUrl } } })); } catch(e){}
+    }
     // update main progress after Computer stage (base)
     if (compReady) onMainProgress(60);
     else onMainProgress(40);
@@ -246,9 +250,17 @@ export async function preloadRemaining() {
         if (low.endsWith('.glb') || low.endsWith('.gltf')) {
           assets[career].modelBlobUrl = assets[career].modelBlobUrl || blobUrl;
           document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'model' } }));
+          // if both model+video now present, emit career-ready so UI can react
+          if (assets[career].modelBlobUrl && assets[career].videoBlobUrl) {
+            try { document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: career, assets: { model: assets[career].modelBlobUrl, video: assets[career].videoBlobUrl } } })); } catch(e){}
+          }
         } else {
           assets[career].videoBlobUrl = assets[career].videoBlobUrl || blobUrl;
           document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'video' } }));
+          // if both model+video now present, emit career-ready so UI can react
+          if (assets[career].modelBlobUrl && assets[career].videoBlobUrl) {
+            try { document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: career, assets: { model: assets[career].modelBlobUrl, video: assets[career].videoBlobUrl } } })); } catch(e){}
+          }
         }
       } else if (u.startsWith('game_assets/')) {
         assets.gameAssets = assets.gameAssets || {};
