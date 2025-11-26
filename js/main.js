@@ -21,6 +21,8 @@ function setMainProgress(pct) {
 
 async function main(){
   setMainProgress(0);
+  // initialize UI (career buttons) early so they can show per-career progress
+  try { initUI(); } catch(e) { console.warn('initUI early failed', e); }
 
   // ensure Start button is visible during loading (disabled until Computer ready)
   if (startButton) {
