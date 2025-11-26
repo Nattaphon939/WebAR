@@ -15,7 +15,11 @@ export function initUI(){
 
   // return to last
   const returnBtn = document.getElementById('return-btn');
-  if (returnBtn) returnBtn.addEventListener('click', ()=> { AR.returnToLast(); });
+  if (returnBtn) {
+    // hide by default; only show when user pressed back (AR.pauseAndShowMenu will reveal it)
+    try { returnBtn.style.display = 'none'; } catch(e){}
+    returnBtn.addEventListener('click', ()=> { AR.returnToLast(); });
+  }
 
   // game / survey / contact buttons same as before
   const gameBtn = document.getElementById('game-btn');

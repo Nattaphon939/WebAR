@@ -22,6 +22,13 @@ function setMainProgress(pct) {
 async function main(){
   setMainProgress(0);
 
+  // ensure Start button is visible during loading (disabled until Computer ready)
+  if (startButton) {
+    startButton.style.display = 'inline-block';
+    startButton.disabled = true;
+    startButton.textContent = 'กำลังเตรียม AR... 0%';
+  }
+
   // listen for loader events
   // Use Computer career progress to drive the main loading bar
   document.addEventListener('career-load-progress', (ev) => {
@@ -32,6 +39,11 @@ async function main(){
         const pct = d.pct || 0;
         setMainProgress(pct);
         if (pct >= 95) loadingText.textContent = 'เตรียมคอนเท้นด้าน AR เสร็จแล้ว';
+        // update start button label to reflect progress while disabled
+        if (startButton) {
+          if (pct >= 100) startButton.textContent = 'กำลังเตรียมเสร็จ...';
+          else startButton.textContent = `กำลังเตรียม AR (Computer): ${pct}%`;
+        }
       }
     } catch(e){}
   });

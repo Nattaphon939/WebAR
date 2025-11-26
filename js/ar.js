@@ -837,6 +837,8 @@ export function pauseAndShowMenu() {
   if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
+  // show the 'return to last' button only when user pressed back
+  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'inline-block'; } catch(e){}
   setNoScan(true);
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
@@ -852,6 +854,8 @@ export function returnToLast() {
     try { if (gltfModel) gltfModel.visible = true; if (videoMesh) videoMesh.visible = true; if (videoElem && videoElem.paused) videoElem.play(); } catch(e){}
     if (mixer) try { mixer.timeScale = 1; } catch(e){}
     if (lastCareer !== 'Computer' && careerActions()) careerActions().style.display = 'flex';
+    // hide return button after resuming
+    try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
     setNoScan(true);
     return;
   }
@@ -866,6 +870,8 @@ export function removeCurrentAndShowMenu() {
   if (careerActions()) careerActions().style.display = 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
+  // hide return button when showing menu from removal
+  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
   setNoScan(true);
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
@@ -879,6 +885,7 @@ export function resetToIdle() {
   waitingForMarkerPlay = false;
   pausedByTrackingLoss = false;
   setAutoPlayEnabled(false);
+  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
   setNoScan(true);
 }
 
