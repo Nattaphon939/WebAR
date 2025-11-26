@@ -77,20 +77,21 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
   if (!assets[career]) assets[career] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
   const a = assets[career];
 
+  // helper to translate file-level pct -> career-level pct and emit
+  const progressFor = (type) => (filePct, url) => {
+    try {
+      let careerPct = 0;
+      if (type === 'marker') careerPct = Math.round(filePct * 0.1);
+      else if (type === 'model') careerPct = 10 + Math.round(filePct * 0.5);
+      else if (type === 'video') careerPct = 60 + Math.round(filePct * 0.4);
+      careerPct = Math.max(0, Math.min(100, careerPct));
+      onProgress(careerPct, url, type);
+      emit('career-load-progress', { career, pct: careerPct, file: url, type });
+    } catch(e){}
+  };
+
   // marker (only Computer usually)
   if (candidates[career].marker && !a.markerBlobUrl) {
-    const progressFor = (type) => (filePct, url) => {
-      try {
-        // map file pct to career pct ranges
-        let careerPct = 0;
-        if (type === 'marker') careerPct = Math.round(filePct * 0.1);
-        else if (type === 'model') careerPct = 10 + Math.round(filePct * 0.5);
-        else if (type === 'video') careerPct = 60 + Math.round(filePct * 0.4);
-        careerPct = Math.max(0, Math.min(100, careerPct));
-        onProgress(careerPct, url, type);
-        emit('career-load-progress', { career, pct: careerPct, file: url, type });
-      } catch(e){}
-    };
     const m = await tryFind(career, candidates[career].marker, progressFor('marker'));
     if (m) a.markerBlobUrl = URL.createObjectURL(m.blob);
   }
@@ -151,33 +152,13 @@ export async function preloadAll(onMainProgress = ()=>{}) {
     onMainProgress(0);
     console.debug('loader.preloadAll: computer stage start');
     emit('loader-phase', { phase:'computer-start' });
-    // marker
-    const mk = await tryFind('Computer', candidates['Computer'].marker);
-    if (mk) {
-      assets['Computer'].markerBlobUrl = URL.createObjectURL(mk.blob);
-      emit('career-load-progress', { career:'Computer', pct:5, type:'marker' });
-    } else {
-      emit('career-load-progress', { career:'Computer', pct:5, type:'marker', ok:false });
-    }
-
-    // model
-    const mm = await tryFind('Computer', candidates['Computer'].model);
-    if (mm) {
-      assets['Computer'].modelBlobUrl = URL.createObjectURL(mm.blob);
-      emit('career-load-progress', { career:'Computer', pct:50, type:'model' });
-    } else {
-      emit('career-load-progress', { career:'Computer', pct:50, type:'model', ok:false });
-    }
-    onMainProgress(50);
-
-    // video
-    const mv = await tryFind('Computer', candidates['Computer'].video);
-    if (mv) {
-      assets['Computer'].videoBlobUrl = URL.createObjectURL(mv.blob);
-      emit('career-load-progress', { career:'Computer', pct:95, type:'video' });
-    } else {
-      emit('career-load-progress', { career:'Computer', pct:95, type:'video', ok:false });
-    }
+    // Use ensureCareerAssets for Computer so we get file-level progress callbacks
+    try {
+      await ensureCareerAssets('Computer', (pct, file, type) => {
+        // forward progress events (ensureCareerAssets already emits career-load-progress)
+        try { emit('career-load-progress', { career:'Computer', pct, file, type }); } catch(e){}
+      });
+    } catch(e) { console.warn('ensureCareerAssets computer err', e); }
 
     const compReady = !!(assets['Computer'].modelBlobUrl && assets['Computer'].videoBlobUrl);
     // Emit career-ready for Computer so UI can react (main now shows Start on career-ready)
