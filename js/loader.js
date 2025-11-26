@@ -17,9 +17,8 @@ function emit(name, detail={}) {
   try { document.dispatchEvent(new CustomEvent(name, { detail })); } catch(e){}
 }
 
-async function tryFind(career, list) {
-  // try fetching with a short timeout to avoid hanging the whole preload
-  const timeoutMs = 7000;
+async function tryFind(career, list, onProgress = ()=>{}, timeoutMs = 7000) {
+  // try fetching each candidate; emit progress via onProgress(capturePct, url)
   for (const name of list || []) {
     if (!name) continue;
     const url = `${JOB_ROOT}/${career}/${name}`;
@@ -29,10 +28,41 @@ async function tryFind(career, list) {
       const r = await fetch(encodeURI(url), { signal: controller.signal });
       clearTimeout(id);
       if (!r || !r.ok) continue;
-      const b = await r.blob();
-      if (!b || b.size === 0) continue;
-      return { blob: b, url };
-    } catch(e){ /* try next */ }
+
+      const contentLength = parseInt(r.headers.get('Content-Length') || '0', 10);
+      // if no streaming support or no content-length, fall back to blob
+      if (!r.body || !contentLength) {
+        const b = await r.blob();
+        if (!b || b.size === 0) continue;
+        try { onProgress(100, url); } catch(e){}
+        return { blob: b, url };
+      }
+
+      const reader = r.body.getReader();
+      let received = 0;
+      const chunks = [];
+      let nextThreshold = 10; // emit every 10%
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length || value.byteLength || 0;
+        const pct = Math.round((received / contentLength) * 100);
+        if (pct >= nextThreshold) {
+          try { onProgress(Math.min(100, pct), url); } catch(e){}
+          nextThreshold += 10;
+        }
+      }
+      // combine chunks
+      let size = 0;
+      for (const c of chunks) size += c.length || c.byteLength || 0;
+      const combined = new Uint8Array(size);
+      let offset = 0;
+      for (const c of chunks) { combined.set(c, offset); offset += c.length || c.byteLength || 0; }
+      const blob = new Blob([combined]);
+      try { onProgress(100, url); } catch(e){}
+      return { blob, url };
+    } catch(e){ /* try next candidate */ }
   }
   return null;
 }
@@ -49,17 +79,29 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
 
   // marker (only Computer usually)
   if (candidates[career].marker && !a.markerBlobUrl) {
-    const m = await tryFind(career, candidates[career].marker);
+    const progressFor = (type) => (filePct, url) => {
+      try {
+        // map file pct to career pct ranges
+        let careerPct = 0;
+        if (type === 'marker') careerPct = Math.round(filePct * 0.1);
+        else if (type === 'model') careerPct = 10 + Math.round(filePct * 0.5);
+        else if (type === 'video') careerPct = 60 + Math.round(filePct * 0.4);
+        careerPct = Math.max(0, Math.min(100, careerPct));
+        onProgress(careerPct, url, type);
+        emit('career-load-progress', { career, pct: careerPct, file: url, type });
+      } catch(e){}
+    };
+    const m = await tryFind(career, candidates[career].marker, progressFor('marker'));
     if (m) a.markerBlobUrl = URL.createObjectURL(m.blob);
   }
 
   // model
   if (!a.modelBlobUrl) {
-    const m = await tryFind(career, candidates[career].model);
+    const m = await tryFind(career, candidates[career].model, progressFor('model'));
     if (m) {
       a.modelBlobUrl = URL.createObjectURL(m.blob);
       onProgress(100, `${JOB_ROOT}/${career}/${m.url}`, 'model');
-      emit('career-load-progress', { career, pct: 100, type:'model' });
+      emit('career-load-progress', { career, pct: 100, file: `${JOB_ROOT}/${career}/${m.url}`, type:'model' });
     } else {
       onProgress(0, null, 'model');
       emit('career-load-progress', { career, pct: 0, type:'model', ok:false });
@@ -71,11 +113,11 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
 
   // video
   if (!a.videoBlobUrl) {
-    const v = await tryFind(career, candidates[career].video);
+    const v = await tryFind(career, candidates[career].video, progressFor('video'));
     if (v) {
       a.videoBlobUrl = URL.createObjectURL(v.blob);
       onProgress(100, `${JOB_ROOT}/${career}/${v.url}`, 'video');
-      emit('career-load-progress', { career, pct: 100, type:'video' });
+      emit('career-load-progress', { career, pct: 100, file: `${JOB_ROOT}/${career}/${v.url}`, type:'video' });
     } else {
       onProgress(0, null, 'video');
       emit('career-load-progress', { career, pct: 0, type:'video', ok:false });
