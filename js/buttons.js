@@ -2,9 +2,6 @@
 import * as AR from './ar.js';
 import { getAssets as getLoaderAssets } from './loader.js';
 
-// module-level map so other functions (refresh) can access button elements
-let _map = {};
-
 /* create wide progress bar at bottom-center inside button */
 function createButtonBarElement() {
   const wrap = document.createElement('div');
@@ -54,6 +51,8 @@ export function initButtons(){
   const btns = Array.from(document.querySelectorAll('.career-btn'));
   if (!btns || btns.length === 0) return;
 
+  console.debug('buttons.init: found career buttons', btns.map(b=>b.dataset.career));
+
   const map = {};
   btns.forEach(btn => {
     // ensure relative for absolute bar
@@ -74,41 +73,34 @@ export function initButtons(){
     });
   });
 
-  // store internal map for refresh use
-  _map = map;
-
   // listen loader events (career-load-progress)
   document.addEventListener('career-load-progress', (ev) => {
     const d = ev.detail || {};
     const career = d.career;
+    console.debug('buttons: career-load-progress', d);
     if (!career || !map[career]) return;
-    // ensure numeric pct if provided
-    const pct = Math.max(0, Math.min(100, d.pct || 0));
+    // determine pct: prefer explicit pct but fall back to type mapping
+    let pct = typeof d.pct === 'number' ? d.pct : null;
+    if (pct === null) {
+      const t = (d.type || '').toLowerCase();
+      if (t === 'marker') pct = 5;
+      else if (t === 'model') pct = 50;
+      else if (t === 'video') pct = 95;
+      else pct = 20;
+    }
+    pct = Math.max(0, Math.min(100, Math.round(pct)));
     try { map[career].inner.style.width = pct + '%'; } catch(e){}
+    try { map[career].btn.title = `กำลังโหลด ${d.type || 'ไฟล์'}: ${pct}% ${d.file ? '('+d.file+')' : ''}`; } catch(e){}
   });
 
   document.addEventListener('career-ready', (ev) => {
     const career = ev.detail && ev.detail.career;
+    console.debug('buttons: career-ready', ev.detail);
     if (!career || !map[career]) return;
     try { map[career].inner.style.width = '100%'; } catch(e){}
+    try { map[career].btn.title = 'พร้อมใช้งาน — คลิกเพื่อดู'; } catch(e){}
     setButtonState(map[career].btn, true);
   });
-
-  // refresh buttons from loader assets when menu shown or on demand
-  async function refreshFromAssets() {
-    try {
-      const loaded = (typeof getLoaderAssets === 'function') ? getLoaderAssets() : null;
-      if (!loaded) return;
-      Object.keys(map).forEach(c => {
-        const a = loaded[c] || {};
-        const pct = (a.modelBlobUrl && a.videoBlobUrl) ? 100 : (a.modelBlobUrl || a.videoBlobUrl) ? 50 : 0;
-        try { map[c].inner.style.width = pct + '%'; } catch(e){}
-        setButtonState(map[c].btn, pct === 100);
-      });
-    } catch(e){}
-  }
-
-  document.addEventListener('show-career-menu', ()=> { refreshFromAssets(); });
 
   // reflect already loaded assets (if AR.getAssets present)
   try {

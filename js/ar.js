@@ -325,10 +325,7 @@ function attachContentToAnchor(gltf, video) {
       if (lastCareer && ['AI','Cloud','Data_Center','Network'].includes(lastCareer)) {
         if (careerActions()) careerActions().style.display = 'flex';
       }
-      if (careerMenu()) {
-        careerMenu().style.display = 'flex';
-        try { document.dispatchEvent(new CustomEvent('show-career-menu')); } catch(e){}
-      }
+      if (careerMenu()) careerMenu().style.display = 'flex';
       if (backBtn()) backBtn().style.display = 'none';
       if (scanFrame()) scanFrame().style.display = 'none';
 
@@ -838,10 +835,7 @@ export function pauseAndShowMenu() {
   isPausedByBack = true;
   setAutoPlayEnabled(false);
   if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
-  if (careerMenu()) {
-    careerMenu().style.display = 'flex';
-    try { document.dispatchEvent(new CustomEvent('show-career-menu')); } catch(e){}
-  }
+  if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
   // show the 'return to last' button only when user pressed back
   try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'inline-block'; } catch(e){}
