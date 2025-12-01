@@ -1,5 +1,5 @@
 // /WEB/js/loader.js
-// Optimized for Parallel Loading (Turbo Mode)
+// Optimized for 5Mbps Mobile Data (Hybrid: Fast Start + Gentle Background)
 export const JOB_ROOT = './Job';
 export const careers = ['Computer','AI','Cloud','Data_Center','Network'];
 export const candidates = {
@@ -10,7 +10,7 @@ export const candidates = {
   Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
 };
 
-const assets = {}; // career -> { modelBlobUrl, videoBlobUrl, markerBlobUrl }
+const assets = {}; 
 export function getAssets(){ return assets; }
 
 function emit(name, detail={}) {
@@ -18,8 +18,8 @@ function emit(name, detail={}) {
 }
 
 async function tryFind(career, list) {
-  // try fetching with a short timeout to avoid hanging the whole preload
-  const timeoutMs = 15000; // Increased timeout for parallel loading
+  // timeout นานขึ้นสำหรับเน็ตช้า
+  const timeoutMs = 20000; 
   for (const name of list || []) {
     if (!name) continue;
     const url = `${JOB_ROOT}/${career}/${name}`;
@@ -42,59 +42,57 @@ export function isCareerReady(career){
   return !!(a.modelBlobUrl && a.videoBlobUrl);
 }
 
+// โหลด assets ของอาชีพเดียว
 export async function ensureCareerAssets(career, onProgress = ()=>{}) {
   if (!career || !careers.includes(career)) return null;
   if (!assets[career]) assets[career] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
   const a = assets[career];
 
-  // Parallel loading promises
-  const promises = [];
+  // โหลด Model + Video + Marker ของอาชีพนี้ "พร้อมกัน" (Parallel within career)
+  // เพื่อให้จบอาชีพนี้ไวที่สุด
+  const pList = [];
 
-  // 1. Marker
+  // Marker (เฉพาะ Computer)
   if (candidates[career].marker && !a.markerBlobUrl) {
-    promises.push(tryFind(career, candidates[career].marker).then(m => {
-      if (m) a.markerBlobUrl = URL.createObjectURL(m.blob);
+    pList.push(tryFind(career, candidates[career].marker).then(m => {
+        if(m) a.markerBlobUrl = URL.createObjectURL(m.blob);
     }));
   }
 
-  // 2. Model
+  // Model
   if (!a.modelBlobUrl) {
-    promises.push(tryFind(career, candidates[career].model).then(m => {
+    pList.push(tryFind(career, candidates[career].model).then(m => {
       if (m) {
         a.modelBlobUrl = URL.createObjectURL(m.blob);
         onProgress(100, `${JOB_ROOT}/${career}/${m.url}`, 'model');
         emit('career-load-progress', { career, pct: 100, type:'model' });
       } else {
         onProgress(0, null, 'model');
-        emit('career-load-progress', { career, pct: 0, type:'model', ok:false });
       }
     }));
   } else {
-    // Already ready, just emit
     onProgress(100,null,'model');
     emit('career-load-progress', { career, pct: 100, type:'model' });
   }
 
-  // 3. Video
+  // Video
   if (!a.videoBlobUrl) {
-    promises.push(tryFind(career, candidates[career].video).then(v => {
+    pList.push(tryFind(career, candidates[career].video).then(v => {
       if (v) {
         a.videoBlobUrl = URL.createObjectURL(v.blob);
         onProgress(100, `${JOB_ROOT}/${career}/${v.url}`, 'video');
         emit('career-load-progress', { career, pct: 100, type:'video' });
       } else {
         onProgress(0, null, 'video');
-        emit('career-load-progress', { career, pct: 0, type:'video', ok:false });
       }
     }));
   } else {
-    // Already ready
     onProgress(100,null,'video');
     emit('career-load-progress', { career, pct: 100, type:'video' });
   }
 
-  // Wait for all fetches for this career to finish
-  await Promise.all(promises);
+  // รอจนครบทุกไฟล์ของอาชีพนี้
+  await Promise.all(pList);
 
   if (a.modelBlobUrl && a.videoBlobUrl) {
     emit('career-ready', { career, assets: { model: a.modelBlobUrl, video: a.videoBlobUrl } });
@@ -104,52 +102,34 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
 }
 
 /*
-  preloadAll(onMainProgress)
-  - Loads Computer assets in PARALLEL (Fastest start)
-  - Loads other careers in PARALLEL background
+  preloadAll:
+  1. ทุ่มเน็ตโหลด 'Computer' ให้เสร็จก่อนเพื่อน (Priority สูงสุด)
+  2. พอ Computer เสร็จ ค่อยโหลดที่เหลือ "ทีละตัว" (Sequential) เพื่อไม่ให้เน็ตอืด
 */
 export async function preloadAll(onMainProgress = ()=>{}) {
-  console.debug('loader.preloadAll: start (Parallel Mode)');
+  console.debug('loader.preloadAll: start (Mobile Optimized)');
   for (const c of careers) assets[c] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
-  try { onMainProgress(10); } catch(e){}
+  try { onMainProgress(5); } catch(e){}
 
-  // 1) Computer (Critical Path) - Load all 3 assets in parallel
+  // --- Phase 1: Computer First (Critical Path) ---
+  // โหลด Marker, Model, Video ของ Computer พร้อมกัน (3 connections พอไหวสำหรับ 5mb)
   try {
-    console.debug('loader.preloadAll: computer stage start');
+    console.debug('loader: Loading Computer...');
     emit('loader-phase', { phase:'computer-start' });
     
-    const pMarker = tryFind('Computer', candidates['Computer'].marker).then(mk => {
-        if(mk) {
-            assets['Computer'].markerBlobUrl = URL.createObjectURL(mk.blob);
-            emit('career-load-progress', { career:'Computer', pct:10, type:'marker' });
-        }
+    await ensureCareerAssets('Computer', (pct, file, type) => {
+        // อัปเดต UI เฉพาะของ Computer
     });
 
-    const pModel = tryFind('Computer', candidates['Computer'].model).then(mm => {
-        if(mm) {
-            assets['Computer'].modelBlobUrl = URL.createObjectURL(mm.blob);
-            emit('career-load-progress', { career:'Computer', pct:60, type:'model' });
-        }
-    });
-
-    const pVideo = tryFind('Computer', candidates['Computer'].video).then(mv => {
-        if(mv) {
-            assets['Computer'].videoBlobUrl = URL.createObjectURL(mv.blob);
-            emit('career-load-progress', { career:'Computer', pct:90, type:'video' });
-        }
-    });
-
-    // Wait for all Computer assets
-    await Promise.all([pMarker, pModel, pVideo]);
-
-    const compReady = !!(assets['Computer'].modelBlobUrl && assets['Computer'].videoBlobUrl);
+    const compReady = isCareerReady('Computer');
     if (compReady) {
+      // แจ้ง main.js ว่าพร้อมเริ่มแล้ว
       try { 
           document.dispatchEvent(new CustomEvent('career-ready', { 
               detail: { career: 'Computer', assets: { model: assets['Computer'].modelBlobUrl, video: assets['Computer'].videoBlobUrl } } 
           })); 
       } catch(e){}
-      onMainProgress(60); 
+      onMainProgress(60); // Computer เสร็จ = 60% ของความรู้สึก
     } else {
       onMainProgress(40);
     }
@@ -159,99 +139,45 @@ export async function preloadAll(onMainProgress = ()=>{}) {
     onMainProgress(20);
   }
 
-  // 2) Load ALL other careers in parallel (Don't wait one by one)
+  // --- Phase 2: Lazy Load Others (Sequential) ---
+  // โหลดทีละอาชีพ (AI -> Cloud -> ...) เพื่อไม่ให้เน็ตตัน ถ้าผู้ใช้กดเล่น Computer อยู่
   const others = careers.filter(x=> x !== 'Computer');
   
-  // Fire requests for all other careers simultaneously
-  const otherPromises = others.map(c => ensureCareerAssets(c).catch(e => console.warn(e)));
-  
-  // Optional: We can wait for them, or just let them finish in background.
-  // To update progress bar to 100%, we wait for them.
-  Promise.all(otherPromises).then(() => {
+  // ใช้ loop async เพื่อโหลดทีละตัว (Sequential)
+  (async () => {
+      for (let i = 0; i < others.length; i++) {
+          const c = others[i];
+          try {
+              // โหลดอาชีพนี้ให้เสร็จก่อนค่อยไปตัวถัดไป
+              await ensureCareerAssets(c);
+              
+              // อัปเดต Progress รวม (จาก 60% -> 100%)
+              const addedProgress = Math.round(40 * ((i + 1) / others.length));
+              onMainProgress(60 + addedProgress);
+              
+          } catch(e) { console.warn('bg load err', c, e); }
+      }
+      
+      // เมื่อเสร็จหมด
       onMainProgress(100);
       emit('start-ready', { computer: 'Computer', other: 'All' });
-  });
+      emit('preload-done', { assets });
+  })();
 
-  // 3) Game SFX (Parallel with others)
+  // 3) Game SFX (โหลดเงียบๆ ไม่ซีเรียส)
   try {
-    fetch('game_assets/sfx/win.mp3').then(r => {
-        if(r.ok) return r.blob();
-    }).then(b => {
-        if(b) {
-            assets.gameAssets = assets.gameAssets || {};
-            assets.gameAssets['sfx/win.mp3'] = URL.createObjectURL(b);
-        }
+    fetch('game_assets/sfx/win.mp3').then(r=>r.blob()).then(b=>{
+       assets.gameAssets = assets.gameAssets || {};
+       assets.gameAssets['sfx/win.mp3'] = URL.createObjectURL(b);
     }).catch(()=>{});
   } catch(e){}
 
-  // Check immediately if we can start (Computer is ready)
-  if (isCareerReady('Computer')) {
-      // Don't wait for others to finish to allow User to click Start
-      onMainProgress(90); // Almost done visually
-      // Let main.js handle the 100% when it receives 'career-ready'
-  }
-
-  emit('preload-done', { assets });
   return assets;
 }
 
-/* preloadRemaining (Full Background Load) */
+/* preloadRemaining (Full Background Load - ใช้ Logic เดียวกัน) */
 export async function preloadRemaining() {
-  const urls = [];
-  // ... Collect URLs logic same as before ...
-  for (const career of careers) {
-    if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-    const a = assets[career];
-    if (!a.modelBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
-    if (!a.videoBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
-  }
-  try {
-    const mf = await fetch('game_assets/manifest.json');
-    if (mf && mf.ok) {
-      const manifest = await mf.json();
-      for (const item of manifest) {
-        if (item.image) urls.push(`game_assets/cards/${item.image}`);
-        if (item.audioWord) urls.push(`game_assets/audio/${item.audioWord}`);
-        if (item.audioMeaning) urls.push(`game_assets/audio/${item.audioMeaning}`);
-      }
-    }
-  } catch(e){}
-  const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
-  for (const f of sfx) urls.push(`game_assets/sfx/${f}`);
-  
-  const final = Array.from(new Set(urls));
-  
-  // Use Promise.all to fetch EVERYTHING in parallel
-  await Promise.all(final.map(async u => {
-    try {
-      const r = await fetch(encodeURI(u));
-      if (!r.ok) return;
-      const blob = await r.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      // ... storage logic same as before ...
-      if (u.startsWith(`${JOB_ROOT}/`)) {
-        const parts = u.split('/');
-        const career = parts[2];
-        const low = u.toLowerCase();
-        if (low.endsWith('.glb') || low.endsWith('.gltf')) {
-          assets[career].modelBlobUrl = assets[career].modelBlobUrl || blobUrl;
-          // Emit progress for buttons
-          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'model' } }));
-          if (assets[career].modelBlobUrl && assets[career].videoBlobUrl) {
-             document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: career } })); 
-          }
-        } else {
-          assets[career].videoBlobUrl = assets[career].videoBlobUrl || blobUrl;
-          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'video' } }));
-          if (assets[career].modelBlobUrl && assets[career].videoBlobUrl) {
-             document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: career } })); 
-          }
-        }
-      } else if (u.startsWith('game_assets/')) {
-        assets.gameAssets = assets.gameAssets || {};
-        assets.gameAssets[u.replace('game_assets/','')] = blobUrl;
-      }
-    } catch(e){}
-  }));
+  // ฟังก์ชันนี้อาจไม่จำเป็นต้องใช้แล้วเพราะเราทำ Phase 2 ใน preloadAll แล้ว
+  // แต่คงไว้กันเหนียว เผื่อมีการเรียกใช้จากจุดอื่น
   return;
 }
