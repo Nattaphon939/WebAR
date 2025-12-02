@@ -111,7 +111,7 @@ function loadGLTF(blobUrl) {
         }
       } catch(e){}
       resolve(gltf);
-    }, undefined, (err)=>{ console.warn('GLTF load err',err); resolve(null); });
+    }, undefined, (err)=>{ resolve(null); });
   });
 }
 function makeVideoElem(blobUrl) {
@@ -226,6 +226,11 @@ function attachContentToAnchor(gltf, video) {
       animations.forEach(c => {
         try {
           const action = mixer.clipAction(c);
+          
+          // --- FIX: ตั้งค่าให้เล่นรอบเดียวแล้วหยุดค้าง ---
+          action.setLoop(THREE.LoopOnce); 
+          action.clampWhenFinished = true;
+          
           action.reset();
           action.play();
           action.enabled = true;
@@ -295,7 +300,6 @@ function attachContentToAnchor(gltf, video) {
                  gltfModel.position.set(targetX, targetY, 0.05);
             } else {
                  // Fallback: ถ้าคำนวณไม่ได้ ให้ใช้ค่ามาตรฐาน (เท้าโมเดลส่วนใหญ่อยู่ต่ำกว่าจุดหมุนประมาณ 0)
-                 // ค่า -0.45 คือค่าเดิมที่คุณเคยใช้แล้วโอเค + เผื่อระยะวิดีโอ
                  const safeY = videoBottom; // วางจุดหมุนไว้ที่ขอบล่างเลย (กรณีโมเดลจุดหมุนอยู่ที่เท้า)
                  gltfModel.position.set(targetX, safeY, 0.05);
             }
@@ -547,13 +551,15 @@ export async function initAndStart(containerElement) {
       try { await ensureContentForCareer(playingCareer); } catch(e){}
       try { ensureAttachedAndVisible(); } catch(e){}
       
-      // 1. FREEZE FIRST (Show static frame)
-      if (gltfModel) { 
-          gltfModel.visible = true; 
-          if(mixer) { mixer.timeScale = 0; mixer.update(0); }
+      // 1. Show static (Paused)
+      if (gltfModel) {
+          gltfModel.visible = true;
+          if (mixer) { mixer.timeScale = 0; mixer.update(0); } // freeze anim
       }
       if (videoMesh) videoMesh.visible = true;
-      if (videoElem) videoElem.pause();
+      if (videoElem) {
+          videoElem.pause(); // freeze video
+      }
 
       if (videoElem && videoElem.videoWidth) {
          try { videoElem.dispatchEvent(new Event('loadedmetadata')); } catch(e){}
@@ -574,13 +580,15 @@ export async function initAndStart(containerElement) {
       }
 
       const startNow = async () => {
-        // --- 2. WAIT 0.5s ---
+        // --- 2. Wait 0.5s ---
         await new Promise(r => setTimeout(r, 500));
         
         if (!isAnchorTracked) return;
 
-        // --- 3. PLAY ---
-        if (mixer) { try { mixer.timeScale = 1; } catch(e){} }
+        if (!mixer && gltfModel) { /* recovery */ } 
+        // --- 3. Play ---
+        if (mixer) mixer.timeScale = 1;
+
         await new Promise(r => requestAnimationFrame(r));
         if (videoElem) {
            try { await videoElem.play(); } catch(e){ try { videoElem.muted=true; await videoElem.play(); } catch(ee){} }
@@ -633,44 +641,7 @@ export async function initAndStart(containerElement) {
   });
 }
 
-/* hideScanFrameThen */
-function hideScanFrameThen(callback) {
-  const sf = scanFrame();
-  if (!sf) { if (callback) callback(); return; }
-  if (noScanMode) {
-    sf.style.display = 'none';
-    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    if (callback) callback();
-    return;
-  }
-  const cm = careerMenu();
-  try {
-    const cmStyle = cm ? window.getComputedStyle(cm) : null;
-    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '0') {
-      sf.style.display = 'none';
-      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-      if (callback) callback();
-      return;
-    }
-  } catch(e){}
-  const curDisplay = window.getComputedStyle(sf).display;
-  if (curDisplay === 'none' || sf.style.display === 'none') { if (callback) callback(); return; }
-  sf.style.transition = 'opacity 200ms ease';
-  sf.style.opacity = '1';
-  sf.offsetHeight;
-  sf.style.opacity = '0';
-  setTimeout(()=> {
-    try {
-      sf.style.display = 'none';
-      sf.style.transition = '';
-      sf.style.opacity = '1';
-      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    } catch(e){}
-    if (callback) callback();
-  }, 220);
-}
-
-/* Play career (FIX: 0.5s Delay on Resume/Start) */
+/* Play career (FIXED: 0.5s Delay) */
 export async function playCareer(career) {
   if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
@@ -689,11 +660,11 @@ export async function playCareer(career) {
     if (isAnchorTracked) {
        ensureAttachedAndVisible();
        
-       // 1. Freeze
+       // 1. Pause first
        if (videoElem) videoElem.pause();
        if (mixer) mixer.timeScale = 0;
 
-       // 2. Wait 0.5s
+       // 2. Wait 0.5s -> Play
        setTimeout(() => {
          if (!isAnchorTracked) return;
          // 3. Play
@@ -739,7 +710,7 @@ export async function playCareer(career) {
   if (isAnchorTracked && autoPlayEnabled) {
     try { ensureAttachedAndVisible(); } catch(e){}
     
-    // 1. Show Static
+    // 1. Show static
     try { if (gltfModel) { gltfModel.visible = true; if (mixer) { mixer.timeScale=0; mixer.update(0); } } } catch(e){}
     try { if (videoMesh) videoMesh.visible = true; } catch(e){}
     
@@ -789,12 +760,14 @@ export function pauseAndShowMenu() {
 
 export function returnToLast() {
   if (!lastCareer) return;
+  // เรียก playCareer ซ้ำ มันจะเข้าเงื่อนไข "อาชีพเดิม" และ Resume ให้เองอัตโนมัติ
   playCareer(lastCareer);
 }
 
 export function removeCurrentAndShowMenu() {
   clearAnchorContent(false);
   playingCareer = null;
+  isPausedByBack = false;
   setAutoPlayEnabled(true);
   if (careerActions()) careerActions().style.display = 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
@@ -809,6 +782,9 @@ export function resetToIdle() {
   try { clearAnchorContent(false); } catch(e){}
   playingCareer = null;
   lastCareer = null;
+  isPausedByBack = false;
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
   setAutoPlayEnabled(false);
   try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
   setNoScan(true);
