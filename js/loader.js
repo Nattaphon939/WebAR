@@ -1,5 +1,5 @@
 // /WEB/js/loader.js
-// Optimized: Priority Load (Computer + AI Video) -> Then Background
+// Optimized for Mobile 5Mbps + Responsive Button Progress Bars
 export const JOB_ROOT = './Job';
 export const careers = ['Computer','AI','Cloud','Data_Center','Network'];
 export const candidates = {
@@ -18,7 +18,7 @@ function emit(name, detail={}) {
 }
 
 async function tryFind(career, list) {
-  const timeoutMs = 25000;
+  const timeoutMs = 25000; // ให้เวลาเน็ตมือถือนานหน่อย
   for (const name of list || []) {
     if (!name) continue;
     const url = `${JOB_ROOT}/${career}/${name}`;
@@ -41,13 +41,13 @@ export function isCareerReady(career){
   return !!(a.modelBlobUrl && a.videoBlobUrl);
 }
 
-// ฟังก์ชันโหลดรายอาชีพ (ฉลาดขึ้น: เช็คของที่มีอยู่แล้วด้วย)
+// ฟังก์ชันโหลดรายอาชีพ (ปรับปรุงให้ส่ง Progress ละเอียดขึ้น)
 export async function ensureCareerAssets(career, onProgress = ()=>{}) {
   if (!career || !careers.includes(career)) return null;
   if (!assets[career]) assets[career] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
   const a = assets[career];
 
-  // 1. นับจำนวนสิ่งที่ต้องโหลด
+  // 1. นับจำนวนสิ่งที่ต้องโหลดของอาชีพนี้
   let tasks = [];
   if (candidates[career].marker) tasks.push('marker');
   tasks.push('model');
@@ -56,22 +56,24 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
   const totalTasks = tasks.length;
   let finishedTasks = 0;
 
-  // เช็คว่ามีอะไรเสร็จแล้วบ้าง (เช่น AI Video ที่โหลดไปก่อนแล้ว)
+  // ตรวจสอบว่ามีอะไรโหลดเสร็จอยู่แล้วบ้าง (Cache check)
   if (a.markerBlobUrl && tasks.includes('marker')) finishedTasks++;
   if (a.modelBlobUrl) finishedTasks++;
   if (a.videoBlobUrl) finishedTasks++;
 
+  // ฟังก์ชันคำนวณและส่ง %
   const updateProgress = () => {
+    // คำนวณ % ตามจำนวนไฟล์ที่เสร็จ (เช่น 1/2 = 50%, 2/2 = 100%)
     let pct = Math.floor((finishedTasks / totalTasks) * 100);
+    // ส่ง event ไปให้ js/buttons.js อัปเดตความกว้าง Bar
     emit('career-load-progress', { career, pct: pct, type: 'partial' });
   };
 
-  // เริ่มต้น: ถ้ายังไม่เสร็จ ส่ง 5% หรือค่าปัจจุบัน
+  // เริ่มต้น: ถ้ายังไม่ครบ ให้ส่ง 5% เพื่อให้ Bar ขยับนิดนึงว่า "กำลังโหลดนะ"
   if (finishedTasks < totalTasks) {
-     const startPct = Math.max(5, Math.floor((finishedTasks / totalTasks) * 100));
-     emit('career-load-progress', { career, pct: startPct, type: 'start' });
+     emit('career-load-progress', { career, pct: 5, type: 'start' });
   } else {
-     updateProgress(); // ครบแล้ว
+     updateProgress(); // ถ้าครบแล้วก็ส่ง 100% เลย
   }
 
   const pList = [];
@@ -82,7 +84,7 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
         if(m) {
             a.markerBlobUrl = URL.createObjectURL(m.blob);
             finishedTasks++;
-            updateProgress();
+            updateProgress(); // อัปเดต Bar
         }
     }));
   }
@@ -93,7 +95,7 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
       if (m) {
         a.modelBlobUrl = URL.createObjectURL(m.blob);
         finishedTasks++;
-        updateProgress();
+        updateProgress(); // อัปเดต Bar
         onProgress(100, `${JOB_ROOT}/${career}/${m.url}`, 'model');
       }
     }));
@@ -105,15 +107,17 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
       if (v) {
         a.videoBlobUrl = URL.createObjectURL(v.blob);
         finishedTasks++;
-        updateProgress();
+        updateProgress(); // อัปเดต Bar
         onProgress(100, `${JOB_ROOT}/${career}/${v.url}`, 'video');
       }
     }));
   }
 
+  // รอจนทุกอย่างในอาชีพนี้เสร็จ
   await Promise.all(pList);
 
   if (a.modelBlobUrl && a.videoBlobUrl) {
+    // ส่ง event ready (buttons.js จะปรับเป็นสถานะ Active สีเข้ม)
     emit('career-ready', { career, assets: { model: a.modelBlobUrl, video: a.videoBlobUrl } });
   }
 
@@ -122,70 +126,47 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
 
 /*
   preloadAll:
-  Phase 1: โหลด Computer (ครบ) + AI (เฉพาะวิดีโอ) พร้อมกัน
-  Phase 2: โหลดที่เหลือต่อ
+  - Computer: โหลดก่อนเพื่อน (Priority สูงสุด)
+  - Others: ทยอยโหลดทีละตัว (Sequential) เพื่อไม่ให้เน็ตตัน และ Bar จะวิ่งทีละปุ่ม
 */
 export async function preloadAll(onMainProgress = ()=>{}) {
-  console.debug('loader: start (Priority: Comp + AI-Video)');
-  for (const c of careers) {
-      if(!assets[c]) assets[c] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
-  }
+  console.debug('loader.preloadAll: start (Smart Progress)');
+  for (const c of careers) assets[c] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
   try { onMainProgress(5); } catch(e){}
 
-  // --- Phase 1: Critical Batch ---
+  // --- Phase 1: Computer First ---
   try {
-    emit('loader-phase', { phase:'critical-start' });
-    
-    // 1. สั่งโหลด Computer ให้ครบ (Marker, Model, Video)
-    const pComputer = ensureCareerAssets('Computer', (pct) => {
-        // อัปเดต Main Bar ช่วง 0-70% ตาม Computer
-        if(pct > 0) onMainProgress(5 + (pct * 0.6)); 
-    });
-
-    // 2. สั่งโหลด "AI Video" ล่วงหน้า (Manual Fetch)
-    // (เพื่อให้ปุ่ม AI ขึ้นโหลดมาครึ่งหลอดรอไว้เลย)
-    const pAiVideo = tryFind('AI', candidates['AI'].video).then(v => {
-        if(v) {
-            assets['AI'].videoBlobUrl = URL.createObjectURL(v.blob);
-            // ส่ง event ให้ปุ่ม AI ขยับไป 50% (เพราะวิดีโอเสร็จแล้ว 1 จาก 2 อย่าง)
-            emit('career-load-progress', { career: 'AI', pct: 50, type: 'video' });
-        }
-    });
-
-    // รอทั้งคู่เสร็จ (Computer Ready + AI Video Ready)
-    await Promise.all([pComputer, pAiVideo]);
-
+    emit('loader-phase', { phase:'computer-start' });
+    await ensureCareerAssets('Computer'); 
+    // เมื่อ Computer เสร็จ Main Bar จะขยับไป 60%
     const compReady = isCareerReady('Computer');
-    if (compReady) {
-        onMainProgress(80); // เสร็จ Phase 1
-        emit('start-ready', { computer: 'Computer' }); // ปุ่ม Start ทำงานได้เลย
-    }
-
+    if (compReady) onMainProgress(60);
+    else onMainProgress(40);
   } catch(e) {
-    console.warn('critical load err', e);
-    onMainProgress(50);
+    console.warn('preloadAll computer err', e);
+    onMainProgress(20);
   }
 
   // --- Phase 2: Lazy Load Others (Sequential) ---
+  // โหลดทีละปุ่ม ให้เห็น Bar วิ่งทีละปุ่มจนเต็ม
   const others = careers.filter(x=> x !== 'Computer');
   
   (async () => {
       for (let i = 0; i < others.length; i++) {
           const c = others[i];
           try {
-              // เรียก ensureCareerAssets ซ้ำ
-              // - ถ้าเป็น AI: มันจะเห็นว่า Video มีแล้ว จะโหลดแค่ Model (เร็วขึ้น) -> ปุ่มจะวิ่งจาก 50% ไป 100%
-              // - ถ้าเป็นอาชีพอื่น: โหลดใหม่หมด -> ปุ่มจะวิ่งจาก 0% ไป 100%
+              // ฟังก์ชันนี้จะจัดการส่ง event เพื่อขยับ Bar ของปุ่มนั้นๆ เอง (0->50->100)
               await ensureCareerAssets(c);
               
-              // อัปเดต Main Bar ส่วนที่เหลือ (80% -> 100%)
-              const addedProgress = Math.round(20 * ((i + 1) / others.length));
-              onMainProgress(80 + addedProgress);
+              // อัปเดต Main Bar รวม (จาก 60% -> 100%)
+              const addedProgress = Math.round(40 * ((i + 1) / others.length));
+              onMainProgress(60 + addedProgress);
               
           } catch(e) { console.warn('bg load err', c, e); }
       }
       
       onMainProgress(100);
+      emit('start-ready', { computer: 'Computer', other: 'All' });
       emit('preload-done', { assets });
   })();
 
