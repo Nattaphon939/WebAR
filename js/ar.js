@@ -1,4 +1,4 @@
-// /WEB/js/ar.js
+// /WEB/js/ar.js (Updated: Bigger Model Scale 0.7)
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -25,6 +25,7 @@ const backBtn = () => document.getElementById('backBtn');
 
 let mindarThree, renderer, scene, camera;
 let anchor;
+let contentGroup = null; 
 let gltfModel = null;
 let videoElem = null;
 let videoMesh = null;
@@ -61,7 +62,7 @@ export function setNoScan(flag) {
   }
 }
 
-/* Helper: Dispose Deep (Fix White Screen Issue) */
+/* Helper: Dispose Deep */
 function disposeDeep(object) {
   if (!object) return;
   object.traverse((child) => {
@@ -80,6 +81,34 @@ function disposeDeep(object) {
       }
     }
   });
+}
+
+/* Helper: Force Sync Model to Video Time */
+function syncModelToVideo() {
+  if (!videoElem || !mixer || !gltfModel) return;
+  const t = videoElem.currentTime;
+  
+  if (gltfModel.userData && Array.isArray(gltfModel.userData._actions)) {
+    gltfModel.userData._actions.forEach(action => {
+      if(action) {
+        action.time = t;
+        action.paused = false;
+        action.setEffectiveTimeScale(1);
+      }
+    });
+  }
+  mixer.timeScale = 1;
+}
+
+/* Helper: Pre-Sync Pose Only (No Play) */
+function preSyncPose(timeVal) {
+  if (!mixer || !gltfModel) return;
+  if (gltfModel.userData && Array.isArray(gltfModel.userData._actions)) {
+    gltfModel.userData._actions.forEach(action => {
+      if(action) action.time = timeVal;
+    });
+  }
+  try { mixer.update(0); } catch(e){}
 }
 
 /* DRACO */
@@ -143,7 +172,7 @@ function makeVideoElem(blobUrl) {
   v.crossOrigin = 'anonymous';
   v.playsInline = true;
   v.muted = false;
-  v.loop = false; // Important for sync logic
+  v.loop = false; 
   v.preload = 'auto';
   return v;
 }
@@ -183,16 +212,28 @@ function makeVideoLayer(vm) {
 function ensureAttachedAndVisible() {
   try {
     if (!anchor || !anchor.group) return;
+    
+    // Create group if missing
+    if (!contentGroup) {
+      contentGroup = new THREE.Group();
+      anchor.group.add(contentGroup);
+    }
+    // Attach group to anchor if detached
+    if (contentGroup.parent !== anchor.group) {
+      anchor.group.add(contentGroup);
+    }
+
+    // Attach items to group
     if (gltfModel) {
-      if (gltfModel.parent !== anchor.group) {
-        try { anchor.group.add(gltfModel); } catch(e){ console.warn('attach gltfModel err', e); }
+      if (gltfModel.parent !== contentGroup) {
+        contentGroup.add(gltfModel);
       }
       gltfModel.visible = true;
       makeModelRenderPriority(gltfModel);
     }
     if (videoMesh) {
-      if (videoMesh.parent !== anchor.group) {
-        try { anchor.group.add(videoMesh); } catch(e){ console.warn('attach videoMesh err', e); }
+      if (videoMesh.parent !== contentGroup) {
+        contentGroup.add(videoMesh);
       }
       videoMesh.visible = true;
       makeVideoLayer(videoMesh);
@@ -210,16 +251,19 @@ function clearAnchorContent(keep=false) {
     return;
   }
   
-  // Clean up to prevent White Screen / Memory Leak
+  if (contentGroup) {
+    while(contentGroup.children.length > 0){ 
+      contentGroup.remove(contentGroup.children[0]); 
+    }
+  }
+
   if (gltfModel) { 
     disposeDeep(gltfModel);
-    try{ if (gltfModel.parent) gltfModel.parent.remove(gltfModel); }catch{} 
   }
   gltfModel = null;
 
   if (videoMesh) {
     disposeDeep(videoMesh);
-    try{ if (videoMesh.parent) videoMesh.parent.remove(videoMesh); }catch{}
   }
   videoMesh = null;
 
@@ -242,15 +286,9 @@ function clearAnchorContent(keep=false) {
   isModelFinished = false;
 }
 
-/* Finish Logic: Check if both are finished */
 function checkBothFinished() {
-  // If video exists and isn't finished -> wait
   if (videoElem && !isVideoFinished) return;
-  // If mixer exists and isn't finished -> wait
-  // (Assuming model has animation, if no animation mixer is null, so logic passes)
   if (mixer && !isModelFinished) return;
-
-  // If we are here, everything is finished
   finishCareerSequence();
 }
 
@@ -259,7 +297,6 @@ function finishCareerSequence() {
   clearAnchorContent(false);
   playingCareer = null;
   isPausedByBack = false;
-  
   if (lastCareer && ['AI','Cloud','Data_Center','Network'].includes(lastCareer)) {
     if (careerActions()) careerActions().style.display = 'flex';
   }
@@ -278,10 +315,12 @@ function finishCareerSequence() {
 }
 
 function attachContentToAnchor(gltf, video) {
-  // Clear previous logic
-  if (gltfModel) try{ if (gltfModel.parent) gltfModel.parent.remove(gltfModel); }catch{} gltfModel = null;
-  if (videoMesh) try{ if (videoMesh.parent) videoMesh.parent.remove(videoMesh); }catch{} videoMesh = null;
-  if (videoElem) try{ videoElem.pause(); videoElem.onended = null; } catch(e){} videoElem = null;
+  if (contentGroup) {
+     while(contentGroup.children.length > 0) contentGroup.remove(contentGroup.children[0]);
+  }
+  gltfModel = null;
+  videoMesh = null;
+  videoElem = null;
   mixer = null;
   isVideoFinished = false;
   isModelFinished = false;
@@ -292,11 +331,13 @@ function attachContentToAnchor(gltf, video) {
     gltfModel = sceneObj;
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
-    gltfModel.scale.set(0.4,0.4,0.4);
+    // *** UPDATED SCALE HERE (0.7) ***
+    gltfModel.scale.set(0.7, 0.7, 0.7);
     gltfModel.position.set(-0.25, -0.45, 0.05);
     gltfModel.visible = false;
     
-    try { anchor && anchor.group && anchor.group.add(gltfModel); } catch(e){}
+    if (contentGroup) contentGroup.add(gltfModel);
+
     try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
 
     const animations = (gltf.animations && gltf.animations.length > 0) ? gltf.animations : (sceneObj.userData && Array.isArray(sceneObj.userData._clips) ? sceneObj.userData._clips : null);
@@ -307,30 +348,25 @@ function attachContentToAnchor(gltf, video) {
         try {
           const action = mixer.clipAction(c);
           action.reset();
-          // Config to play once and hold last frame
           action.loop = THREE.LoopOnce;
           action.clampWhenFinished = true;
-          action.play();
+          action.play(); 
+          action.paused = true;
           actions.push(action);
         } catch(e) { console.warn('action setup err', e); }
       });
       try { gltfModel.userData._actions = actions; } catch(e){}
       
-      // Listen for finish
       mixer.addEventListener('finished', () => {
          isModelFinished = true;
          checkBothFinished();
       });
-
-      mixer.timeScale = 0; // Pause initially
-      try { mixer.update(0); } catch(e){}
     } else {
-       // No animation -> assume finished immediately
        isModelFinished = true;
     }
     try { makeModelRenderPriority(gltfModel); } catch(e){}
   } else {
-     isModelFinished = true; // No model = finished
+     isModelFinished = true; 
   }
 
   // --- Setup Video ---
@@ -343,7 +379,9 @@ function attachContentToAnchor(gltf, video) {
     const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
     videoMesh = new THREE.Mesh(plane, mat);
     videoMesh.visible = false;
-    try { anchor && anchor.group && anchor.group.add(videoMesh); } catch(e){}
+    
+    if (contentGroup) contentGroup.add(videoMesh);
+
     try { videoMesh.rotation.set(0,0,0); videoMesh.quaternion.set(0,0,0,1); videoMesh.updateMatrixWorld(true); } catch(e){}
     makeVideoLayer(videoMesh);
 
@@ -359,7 +397,8 @@ function attachContentToAnchor(gltf, video) {
 
         if (gltfModel) {
             gltfModel.visible = true;
-            gltfModel.scale.set(0.4, 0.4, 0.4);
+            // *** UPDATED SCALE HERE AS WELL (0.7) ***
+            gltfModel.scale.set(0.7, 0.7, 0.7);
             gltfModel.rotation.set(0, 0, 0);
             gltfModel.quaternion.set(0, 0, 0, 1);
             gltfModel.updateMatrixWorld(true);
@@ -386,13 +425,12 @@ function attachContentToAnchor(gltf, video) {
     };
 
     videoElem.onended = () => {
-      // Don't finish yet. Pause and wait for model.
       try { videoElem.pause(); } catch(e){}
       isVideoFinished = true;
       checkBothFinished();
     };
   } else {
-     isVideoFinished = true; // No video = finished
+     isVideoFinished = true; 
   }
 }
 
@@ -589,6 +627,10 @@ export async function initAndStart(containerElement) {
   createLights(scene);
   anchor = mindarThree.addAnchor(0);
   
+  // Init Group
+  contentGroup = new THREE.Group();
+  anchor.group.add(contentGroup);
+
   try { setNoScan(false); } catch(e){}
 
   await ensureContentForCareer('Computer');
@@ -612,13 +654,13 @@ export async function initAndStart(containerElement) {
       if (!autoPlayEnabled) return;
 
       if (pausedByTrackingLoss) {
-        // Resume logic: delay 0.5s if desired or instant? 
-        // User asked for delay on "Show Content". Resume is technically "Showing" again.
-        // Let's add delay here too for consistency, or keep instant. 
-        // User said "Start Play" -> Delay.
         setTimeout(async () => {
-            if (mixer) try { mixer.timeScale = 1; } catch(e){}
             if (videoElem && videoElem.paused) {
+              const onPlayingResume = () => {
+                  syncModelToVideo(); 
+                  videoElem.removeEventListener('playing', onPlayingResume);
+              };
+              videoElem.addEventListener('playing', onPlayingResume);
               try { await videoElem.play(); } catch(err){
                 try { videoElem.muted = true; await videoElem.play(); } catch(e){}
               }
@@ -630,7 +672,6 @@ export async function initAndStart(containerElement) {
         return;
       }
 
-      // START NEW PLAYBACK
       const startNow = async () => {
         try {
           try {
@@ -653,6 +694,7 @@ export async function initAndStart(containerElement) {
             gltfModel.userData._actions.forEach(a => {
               try { 
                   a.play(); 
+                  a.paused = true; 
                   a.enabled = true; 
                   a.setEffectiveWeight && a.setEffectiveWeight(1); 
               } catch(e){}
@@ -660,20 +702,32 @@ export async function initAndStart(containerElement) {
           }
         } catch(e) {}
 
-        // --- DELAY 0.5s BEFORE PLAYING ---
+        if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
+        preSyncPose(0);
+        try { renderer && renderer.render && renderer.render(scene, camera); } catch(e){}
+
         setTimeout(async () => {
-            if (mixer) {
-              try { mixer.timeScale = 1; } catch(e){}
-              try { mixer.update(0); } catch(e){}
-            }
-
-            await new Promise(r => requestAnimationFrame(r));
-            try { renderer && renderer.render && renderer.render(scene, camera); } catch(e){}
-
             if (videoElem) {
-               try { await videoElem.play(); } catch(e){ try { videoElem.muted=true; await videoElem.play(); } catch(ee){} }
+               const onVideoStart = () => {
+                   syncModelToVideo(); 
+                   videoElem.removeEventListener('playing', onVideoStart);
+               };
+               videoElem.addEventListener('playing', onVideoStart);
+
+               try { 
+                   videoElem.currentTime = 0; 
+                   await videoElem.play(); 
+               } catch(e){ 
+                   try { videoElem.muted=true; await videoElem.play(); } catch(ee){} 
+                   if(mixer) mixer.timeScale = 1;
+               }
+            } else {
+                if (mixer) {
+                    try { mixer.timeScale = 1; } catch(e){}
+                    try { mixer.update(0); } catch(e){}
+                }
             }
-        }, 500); // 500ms Delay
+        }, 500); 
       };
 
       if (waitingForMarkerPlay || (videoElem && videoElem.paused && playingCareer)) {
@@ -706,7 +760,11 @@ export async function initAndStart(containerElement) {
 
     if (!autoPlayEnabled) return;
     if (videoElem && !videoElem.paused) {
-      try { videoElem.pause(); pausedByTrackingLoss = true; } catch(e){}
+      try { 
+        videoElem.pause(); 
+        videoElem.currentTime = Math.max(0, videoElem.currentTime - 0.4); 
+        pausedByTrackingLoss = true; 
+      } catch(e){}
     }
     if (mixer) {
       try { mixer.timeScale = 0; } catch(e){}
@@ -718,22 +776,19 @@ export async function initAndStart(containerElement) {
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
+    
+    // --- Group Billboard (Rotate the whole group to face camera) ---
+    if (isAnchorTracked && camera && contentGroup) {
+        const camPos = camera.position;
+        const worldPos = new THREE.Vector3();
+        contentGroup.getWorldPosition(worldPos);
+        const target = new THREE.Vector3(camPos.x, worldPos.y, camPos.z);
+        contentGroup.lookAt(target);
+    }
+
     try {
       if (anchor && anchor.group && camera) {
-        tmpObj.position.copy(anchor.group.getWorldPosition(new THREE.Vector3()));
-        tmpObj.lookAt(camera.position);
-        tmpObj.updateMatrixWorld();
-        tmpObj.getWorldQuaternion(tmpQuat);
-
-        if (anchor.group.parent) {
-          anchor.group.parent.getWorldQuaternion(parentWorldQuat);
-          parentWorldQuat.invert();
-          targetLocalQuat.copy(parentWorldQuat).multiply(tmpQuat);
-        } else {
-          targetLocalQuat.copy(tmpQuat);
-        }
-
-        anchor.group.quaternion.slerp(targetLocalQuat, SMOOTH_FACTOR);
+        // ...
       }
     } catch(e){}
     renderer.render(scene, camera);
@@ -798,10 +853,20 @@ export async function playCareer(career) {
     isPausedByBack = false;
     if (isAnchorTracked) {
        ensureAttachedAndVisible();
-        // --- DELAY 0.5s ON RESUME TOO ---
+        if(videoElem) preSyncPose(videoElem.currentTime);
+        try { renderer && renderer.render && renderer.render(scene, camera); } catch(e){}
+
         setTimeout(async() => {
-           if (videoElem) videoElem.play().catch(()=>{}); 
-           if (mixer) mixer.timeScale = 1;
+           if (videoElem) {
+               const onResume = () => {
+                   syncModelToVideo(); 
+                   videoElem.removeEventListener('playing', onResume);
+               };
+               videoElem.addEventListener('playing', onResume);
+               videoElem.play().catch(()=>{}); 
+           } else {
+               if (mixer) mixer.timeScale = 1;
+           }
         }, 500);
     } else {
        waitingForMarkerPlay = true;
@@ -855,13 +920,28 @@ export async function playCareer(career) {
        try { videoElem.dispatchEvent(new Event('loadedmetadata')); } catch(e){}
     }
 
-    // --- DELAY 0.5s ON NEW PLAY ---
+    if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
+    preSyncPose(0);
+    try { renderer && renderer.render && renderer.render(scene, camera); } catch(e){}
+
     setTimeout(async () => {
-        if (mixer) try { mixer.timeScale = 1; } catch(e){}
-        if (videoElem) try { 
-            videoElem.currentTime = 0; 
-            await videoElem.play().catch(()=>{ videoElem.muted = true; videoElem.play().catch(()=>{}); }); 
-        } catch(err){}
+        if (videoElem) {
+            const onPlayNew = () => {
+                syncModelToVideo();
+                videoElem.removeEventListener('playing', onPlayNew);
+            };
+            videoElem.addEventListener('playing', onPlayNew);
+
+            try { 
+                videoElem.currentTime = 0; 
+                await videoElem.play(); 
+            } catch(e){ 
+                try { videoElem.muted = true; await videoElem.play(); } catch(ee){}
+                if(mixer) mixer.timeScale = 1;
+            }
+        } else {
+            if(mixer) mixer.timeScale = 1;
+        }
     }, 500);
 
     waitingForMarkerPlay = false;
@@ -872,7 +952,10 @@ export async function playCareer(career) {
 }
 
 export function pauseAndShowMenu() {
-  if (videoElem) try { videoElem.pause(); } catch(e){}
+  if (videoElem) try { 
+    videoElem.pause();
+    videoElem.currentTime = Math.max(0, videoElem.currentTime - 0.4);
+  } catch(e){}
   if (mixer) try { mixer.timeScale = 0; } catch(e){}
   isPausedByBack = true;
   setAutoPlayEnabled(false);
