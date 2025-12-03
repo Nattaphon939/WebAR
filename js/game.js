@@ -1,5 +1,5 @@
 // js/game.js
-// Memory Match game — Mobile Optimized: Compact Rows (4-5 cols)
+// Memory Match game — Mobile Optimized: 3 Columns for 1&4, Scattered for 2&3
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 4; 
@@ -34,18 +34,18 @@ let totalSecondsAccum = 0;
 const allAudioElements = new Set();
 
 function getPairsForStage(stage) {
-  // เช็คมือถือ (< 900px)
   const isMobile = window.innerWidth < 900;
   
   if (isMobile) {
+    // กำหนดจำนวนการ์ดสำหรับมือถือ
     switch(stage) {
-      case 1: return 3;  // 6 ใบ
-      case 2: return 4;  // 8 ใบ
-      case 3: return 5;  // 10 ใบ
-      default: return 6; // 12 ใบ
+      case 1: return 3;  // 6 ใบ (3x2)
+      case 2: return 4;  // 8 ใบ (3x2 + 2)
+      case 3: return 5;  // 10 ใบ (3x3 + 1)
+      default: return 6; // 12 ใบ (3x4)
     }
   } else {
-    // คอมพิวเตอร์ (คงเดิม)
+    // Desktop คงเดิม
     switch(stage) {
       case 1: return 4;
       case 2: return 6;
@@ -185,6 +185,20 @@ function createCardElement(cardObj){
   el.dataset.id = cardObj.id;
   el.dataset.instance = cardObj.instanceId;
 
+  // --- กำหนดขนาดการ์ดสำหรับมือถือ: 3 คอลัมน์ (ประมาณ 29-30%) ---
+  // การใช้ 3 คอลัมน์จะทำให้:
+  // - 6 ใบ (ด่าน 1): เต็ม 2 แถว
+  // - 12 ใบ (ด่าน 4): เต็ม 4 แถว
+  // - 8 ใบ (ด่าน 2): 3-3-2 (2 ใบสุดท้ายอยู่กลาง = กระจาย)
+  // - 10 ใบ (ด่าน 3): 3-3-3-1 (1 ใบสุดท้ายอยู่กลาง = กระจาย)
+  if (window.innerWidth < 900) {
+      el.style.flex = '0 0 29%'; 
+      el.style.maxWidth = '29%'; 
+  } else {
+      el.style.flex = '0 0 15%'; // Desktop
+      el.style.maxWidth = '15%';
+  }
+
   const inner = document.createElement('div');
   inner.className = 'card-inner';
 
@@ -235,25 +249,14 @@ function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
 
-  // --- FIX: เพิ่มคอลัมน์เพื่อลดความสูงและให้เต็มแถว ---
-  if (window.innerWidth < 900) {
-    if (cards.length === 6) {
-        // ด่าน 1 (6 ใบ): 3 คอลัมน์ x 2 แถว
-        boardEl.style.gridTemplateColumns = 'repeat(3, 1fr)';
-    } else if (cards.length === 8) {
-        // ด่าน 2 (8 ใบ): 4 คอลัมน์ x 2 แถว (เต็มจอ)
-        boardEl.style.gridTemplateColumns = 'repeat(4, 1fr)';
-    } else if (cards.length === 10) {
-        // ด่าน 3 (10 ใบ): 5 คอลัมน์ x 2 แถว (เต็มจอ)
-        boardEl.style.gridTemplateColumns = 'repeat(5, 1fr)';
-    } else {
-        // ด่าน 4 (12 ใบ): 4 คอลัมน์ x 3 แถว
-        boardEl.style.gridTemplateColumns = 'repeat(4, 1fr)';
-    }
-  } else {
-    // Desktop Default
-    boardEl.style.gridTemplateColumns = '';
-  }
+  // ใช้ Flexbox และ justify-content: center เพื่อให้เศษที่เหลืออยู่ตรงกลาง (scattered)
+  boardEl.style.display = 'flex';
+  boardEl.style.flexWrap = 'wrap';
+  boardEl.style.justifyContent = 'center'; 
+  boardEl.style.alignContent = 'center';
+  boardEl.style.gap = '12px'; // เพิ่มช่องว่างนิดหน่อยเพื่อให้ดูสวย
+  boardEl.style.padding = '10px';
+  boardEl.style.gridTemplateColumns = ''; // ล้างค่า Grid ทิ้ง
 
   cards.forEach(c=>{
     const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
