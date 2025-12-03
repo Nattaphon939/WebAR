@@ -18,7 +18,6 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <!-- LOADING -->
   <div id="loading-screen" aria-hidden="false">
     <div class="bar-wrap"><div id="bar" class="bar"></div></div>
     <div id="loading-text">กำลังโหลดทรัพยากร... 0%</div>
@@ -26,15 +25,18 @@
     <button id="startButton">แตะเพื่อเริ่ม AR</button>
   </div>
 
-  <!-- AR canvas container -->
   <div id="container"></div>
 
-  <!-- scan overlay -->
   <div id="scan-frame">
-    <div class="frame"><div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div></div>
+    <div class="frame">
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+      <div class="scan-line"></div>
+    </div>
   </div>
 
-  <!-- Career menu (centered vertical) -->
   <div id="career-menu">
     <h2>เลือกอาชีพ</h2>
     <div class="career-list">
@@ -44,7 +46,6 @@
       <button class="career-btn" data-career="Network">Network</button>
     </div>
 
-    <!-- action buttons appear when a non-Computer career is active -->
     <div id="career-actions">
       <button id="game-btn" class="action-btn">🎮 Memory Match Game</button>
       <button id="survey-btn" class="action-btn">📝 แบบสำรวจ (Google Form)</button>

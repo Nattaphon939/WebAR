@@ -1,21 +1,130 @@
-:root{--accent:#00ffff}
-html,body{height:100%;margin:0;background:#000;color:#fff;overflow:hidden;font-family:Inter,system-ui,Arial;}
-#container{position:fixed;inset:0;display:none;background:#000;}
-/* loading */
-#loading-screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;background:linear-gradient(180deg,#020202,#000);}
-.bar-wrap{width:84%;max-width:440px;height:12px;background:rgba(255,255,255,0.06);border-radius:8px;overflow:hidden;margin-bottom:16px}
-.bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#0077ff);transition:width .25s;}
-#loading-text{color:#cbd5e1;margin-bottom:14px}
-#startButton{display:none;padding:12px 22px;border-radius:10px;border:none;background:var(--accent);color:#000;font-weight:600;cursor:pointer}
+/* css/style.css - Thicker Line + Clear Bounce Animation */
 
-/* scan frame (initial) - neon outer removed */
-#scan-frame{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:20}
-/* Remove neon border: keep a subtle rounded holder without bright neon */
-.frame{width:68vmin;height:68vmin;border-radius:12px;border:2px solid rgba(255,255,255,0.03);box-shadow:0 0 6px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center}
-/* hide decorative neon corners */
-.corner{display:none}
+:root {
+  --accent: #00ffff;
+}
 
-/* FORCE-HIDE scan visuals when body.no-scan present (important rules so nothing leaks through) */
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+  font-family: Inter, system-ui, Arial;
+}
+
+#container {
+  position: fixed;
+  inset: 0;
+  display: none;
+  background: #000;
+}
+
+/* --- LOADING SCREEN --- */
+#loading-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  background: linear-gradient(180deg, #020202, #000);
+}
+
+.bar-wrap {
+  width: 84%;
+  max-width: 440px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), #0077ff);
+  transition: width .25s;
+}
+
+#loading-text {
+  color: #cbd5e1;
+  margin-bottom: 14px;
+}
+
+#startButton {
+  display: none;
+  padding: 12px 22px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #000;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* --- SCAN FRAME --- */
+
+#scan-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.frame {
+  width: 70vmin;
+  height: 70vmin;
+  position: relative;
+}
+
+/* มุม 4 ด้าน (หนา 7px) */
+.corner {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border-color: #ffffff;
+  border-style: solid;
+  border-width: 0;
+  display: block !important;
+}
+
+.tl { top: 0; left: 0; border-top-width: 7px; border-left-width: 7px; }
+.tr { top: 0; right: 0; border-top-width: 7px; border-right-width: 7px; }
+.bl { bottom: 0; left: 0; border-bottom-width: 7px; border-left-width: 7px; }
+.br { bottom: 0; right: 0; border-bottom-width: 7px; border-right-width: 7px; }
+
+/* --- เส้นสแกน (แก้ไข Animation) --- */
+.scan-line {
+  position: absolute;
+  width: 100%;
+  height: 5px; /* ความหนา */
+  background: #ffffff;
+  /* แสงฟุ้งตลอดเวลา */
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.9); 
+  left: 0;
+  
+  /* alternate = วิ่งไปแล้ววิ่งกลับ (บน->ล่าง แล้ว ล่าง->บน) */
+  animation: scan-move 3s ease-in-out infinite alternate;
+}
+
+@keyframes scan-move {
+  /* เริ่มต้น: บนสุด */
+  0% {
+    top: 0%;
+  }
+  /* สิ้นสุด: ล่างสุด */
+  100% {
+    top: 98%; /* 98% เพื่อไม่ให้เลยกรอบ */
+  }
+}
+
+/* Logic ซ่อนกรอบเมื่อมีคลาส no-scan */
 body.no-scan #scan-frame,
 body.no-scan #scan-frame *, 
 body.no-scan #scan-frame::before,
@@ -26,43 +135,112 @@ body.no-scan #scan-frame::after {
   pointer-events: none !important;
 }
 
-/* career menu: vertical, centered nice card */
-#career-menu{
-  position:fixed;
-  left:50%;
-  top:50%;
-  transform:translate(-50%,-50%);
-  min-width:240px;
-  max-width:360px;
-  background:rgba(10,10,12,0.78);
-  border:1px solid rgba(0,255,255,0.12);
-  box-shadow:0 10px 30px rgba(0,0,0,0.6), 0 0 20px rgba(0,255,255,0.05);
-  padding:20px;
-  border-radius:14px;
-  z-index:150;
-  display:none;
-  flex-direction:column;
-  align-items:center;
-  gap:10px;
+/* --- CAREER MENU & UI (ส่วนเดิม) --- */
+
+#career-menu {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 240px;
+  max-width: 360px;
+  background: rgba(10, 10, 12, 0.78);
+  border: 1px solid rgba(0, 255, 255, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 255, 255, 0.05);
+  padding: 20px;
+  border-radius: 14px;
+  z-index: 150;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   backdrop-filter: blur(6px);
 }
-#career-menu h2{margin:0;color:var(--accent); font-size:20px; text-shadow:0 0 6px rgba(0,188,212,0.15);}
-.career-list{display:flex;flex-direction:column;width:100%;gap:10px;margin-top:8px;}
-.career-btn{width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(90deg,#0077ff,#00bcd4);color:#000;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,188,212,0.08);transition:transform .12s}
-.career-btn:active{transform:translateY(1px);}
 
-/* career actions (shown after selecting a career except Computer) */
-#career-actions{width:100%;display:none;flex-direction:column;gap:8px;margin-top:8px}
-.action-btn{width:100%;padding:10px;border-radius:10px;border:none;background:rgba(255,255,255,0.06);color:#fff;font-weight:700;cursor:pointer}
+#career-menu h2 {
+  margin: 0;
+  color: var(--accent);
+  font-size: 20px;
+  text-shadow: 0 0 6px rgba(0, 188, 212, 0.15);
+}
 
-/* return button at bottom of card */
-#return-row{width:100%;margin-top:6px;display:flex;justify-content:center}
-#return-btn{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.03);color:#fff;cursor:pointer}
+.career-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 10px;
+  margin-top: 8px;
+}
 
-/* back top-left */
-#backBtn{position:fixed;left:12px;top:12px;display:none;z-index:200;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.5);color:var(--accent);cursor:pointer}
-/* --- career button bottom bar & ready state --- */
-.career-btn { position: relative; overflow: visible; }
+.career-btn {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(90deg, #0077ff, #00bcd4);
+  color: #000;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 188, 212, 0.08);
+  transition: transform .12s;
+  position: relative;
+  overflow: visible;
+}
+
+.career-btn:active {
+  transform: translateY(1px);
+}
+
+#career-actions {
+  width: 100%;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#return-row {
+  width: 100%;
+  margin-top: 6px;
+  display: flex;
+  justify-content: center;
+}
+
+#return-btn {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: #fff;
+  cursor: pointer;
+}
+
+#backBtn {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  display: none;
+  z-index: 200;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .career-btn .btn-bottom-bar { pointer-events: none; }
-.career-btn .btn-bottom-inner { width: 0%; height:100%; border-radius:8px; }
+.career-btn .btn-bottom-inner { width: 0%; height: 100%; border-radius: 8px; }
 .career-btn.career-ready { transition: box-shadow .2s, transform .14s; }
