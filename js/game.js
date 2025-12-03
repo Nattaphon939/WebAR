@@ -1,5 +1,5 @@
 // js/game.js
-// Memory Match game — Mobile Optimized: Always 3 Rows (Perfect Layout)
+// Memory Match game — Mobile Optimized (Max 12 cards to prevent overflow)
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 4; 
@@ -33,17 +33,20 @@ let totalSecondsAccum = 0;
 
 const allAudioElements = new Set();
 
+// --- แก้ไข: ปรับลดจำนวนการ์ดบนมือถือไม่ให้เกิน 12 ใบ (6 คู่) ---
 function getPairsForStage(stage) {
-  const isMobile = window.innerWidth < 900;
+  const isMobile = window.innerWidth < 600;
+  
   if (isMobile) {
+    // Mobile: ลดจำนวนลงเพื่อให้ไม่ล้นจอ (สูงสุด 6 คู่ = 12 ใบ = 4 แถว)
     switch(stage) {
-      case 1: return 3;  // 6 ใบ
-      case 2: return 4;  // 8 ใบ
-      case 3: return 5;  // 10 ใบ
-      default: return 6; // 12 ใบ
+      case 1: return 3;  // 6 ใบ (2 แถว)
+      case 2: return 4;  // 8 ใบ (3 แถว)
+      case 3: return 5;  // 10 ใบ (4 แถว)
+      default: return 6; // 12 ใบ (4 แถวเต็มพอดี)
     }
   } else {
-    // Desktop
+    // Desktop: จัดเต็มได้ถึง 10 คู่ (20 ใบ)
     switch(stage) {
       case 1: return 4;
       case 2: return 6;
@@ -183,39 +186,6 @@ function createCardElement(cardObj){
   el.dataset.id = cardObj.id;
   el.dataset.instance = cardObj.instanceId;
 
-  // --- กำหนดขนาดการ์ดตามสูตร "3 แถว" (Mobile Optimized) ---
-  if (window.innerWidth < 900) {
-      if (cards.length === 6) {
-          // ด่าน 1 (6 ใบ): 2 คอลัมน์ (48%) -> จะได้ 3 แถว (2-2-2)
-          el.style.flex = '0 0 47%'; // เผื่อ gap
-          el.style.maxWidth = '47%';
-      } 
-      else if (cards.length === 8) {
-          // ด่าน 2 (8 ใบ): 3 คอลัมน์ (31%) -> จะได้ 3 แถว (3-3-2) *สมมาตร
-          el.style.flex = '0 0 31%';
-          el.style.maxWidth = '31%';
-      } 
-      else if (cards.length === 10) {
-          // ด่าน 3 (10 ใบ): 4 คอลัมน์ (23%) -> จะได้ 3 แถว (4-4-2) *สมมาตร
-          el.style.flex = '0 0 23%';
-          el.style.maxWidth = '23%';
-      } 
-      else {
-          // ด่าน 4 (12 ใบ): 4 คอลัมน์ (23%) -> จะได้ 3 แถว (4-4-4)
-          el.style.flex = '0 0 23%';
-          el.style.maxWidth = '23%';
-      }
-  } else {
-      // Desktop
-      el.style.flex = '0 0 15%'; 
-      el.style.maxWidth = '15%';
-  }
-
-  // --- FIX: บังคับให้การ์ดเป็นจัตุรัสเสมอ (แก้ปัญหาภาพยืด/ไม่สัมพันธ์) ---
-  el.style.aspectRatio = '1 / 1';
-  // Fallback สำหรับ Browser เก่า (padding-bottom มีใน CSS แล้ว แต่กันเหนียว)
-  el.style.height = 'auto'; 
-
   const inner = document.createElement('div');
   inner.className = 'card-inner';
 
@@ -265,16 +235,6 @@ function createCardElement(cardObj){
 function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
-
-  // ใช้ Flexbox + Center เพื่อให้การ์ดเศษอยู่ตรงกลาง (Scattered)
-  boardEl.style.display = 'flex';
-  boardEl.style.flexWrap = 'wrap';
-  boardEl.style.justifyContent = 'center'; 
-  boardEl.style.alignContent = 'center';
-  boardEl.style.gap = '8px';
-  boardEl.style.padding = '8px';
-  boardEl.style.gridTemplateColumns = ''; // ล้างค่า Grid เดิม
-
   cards.forEach(c=>{
     const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
     const el = createCardElement(cardObj);
@@ -472,10 +432,8 @@ function showFinalScoreUI() {
       if (backBtn) backBtn.style.display = 'none';
       const returnBtn = document.getElementById('return-btn');
       if (returnBtn) returnBtn.style.display = 'none';
-      
       const scanFrame = document.getElementById('scan-frame');
-      if (scanFrame) scanFrame.style.display = 'none'; 
-      
+      if (scanFrame) scanFrame.style.display = 'flex';
     } catch(e){}
     stopTimer();
   });
