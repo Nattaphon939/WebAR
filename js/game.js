@@ -1,5 +1,5 @@
 // js/game.js
-// Memory Match game — Fixed: Scan Frame hidden when returning to Menu
+// Memory Match game — Mobile Optimized: Compact Rows (4-5 cols)
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 4; 
@@ -34,7 +34,8 @@ let totalSecondsAccum = 0;
 const allAudioElements = new Set();
 
 function getPairsForStage(stage) {
-  const isMobile = window.innerWidth < 600;
+  // เช็คมือถือ (< 900px)
+  const isMobile = window.innerWidth < 900;
   
   if (isMobile) {
     switch(stage) {
@@ -44,6 +45,7 @@ function getPairsForStage(stage) {
       default: return 6; // 12 ใบ
     }
   } else {
+    // คอมพิวเตอร์ (คงเดิม)
     switch(stage) {
       case 1: return 4;
       case 2: return 6;
@@ -233,15 +235,23 @@ function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
 
-  if (window.innerWidth < 600) {
-    if (cards.length === 8) {
-        boardEl.style.gridTemplateColumns = 'repeat(2, 1fr)';
-    } else if (cards.length === 10) {
-        boardEl.style.gridTemplateColumns = 'repeat(2, 1fr)';
-    } else {
+  // --- FIX: เพิ่มคอลัมน์เพื่อลดความสูงและให้เต็มแถว ---
+  if (window.innerWidth < 900) {
+    if (cards.length === 6) {
+        // ด่าน 1 (6 ใบ): 3 คอลัมน์ x 2 แถว
         boardEl.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    } else if (cards.length === 8) {
+        // ด่าน 2 (8 ใบ): 4 คอลัมน์ x 2 แถว (เต็มจอ)
+        boardEl.style.gridTemplateColumns = 'repeat(4, 1fr)';
+    } else if (cards.length === 10) {
+        // ด่าน 3 (10 ใบ): 5 คอลัมน์ x 2 แถว (เต็มจอ)
+        boardEl.style.gridTemplateColumns = 'repeat(5, 1fr)';
+    } else {
+        // ด่าน 4 (12 ใบ): 4 คอลัมน์ x 3 แถว
+        boardEl.style.gridTemplateColumns = 'repeat(4, 1fr)';
     }
   } else {
+    // Desktop Default
     boardEl.style.gridTemplateColumns = '';
   }
 
@@ -443,7 +453,6 @@ function showFinalScoreUI() {
       const returnBtn = document.getElementById('return-btn');
       if (returnBtn) returnBtn.style.display = 'none';
       
-      // --- FIX: ซ่อนกรอบสแกนเมื่อกลับสู่เมนู (เพราะเมนูบังอยู่) ---
       const scanFrame = document.getElementById('scan-frame');
       if (scanFrame) scanFrame.style.display = 'none'; 
       
