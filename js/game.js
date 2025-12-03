@@ -1,5 +1,5 @@
 // js/game.js
-// Memory Match game — Mobile Optimized (Max 12 cards to prevent overflow)
+// Memory Match game — Mobile Optimized: 3 Columns Flex (Symmetrical Scattered for 8 & 10 cards)
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 4; 
@@ -33,20 +33,19 @@ let totalSecondsAccum = 0;
 
 const allAudioElements = new Set();
 
-// --- แก้ไข: ปรับลดจำนวนการ์ดบนมือถือไม่ให้เกิน 12 ใบ (6 คู่) ---
+// --- จำนวนการ์ดต่อด่าน (คงเดิมตามที่คุณต้องการ) ---
 function getPairsForStage(stage) {
   const isMobile = window.innerWidth < 600;
   
   if (isMobile) {
-    // Mobile: ลดจำนวนลงเพื่อให้ไม่ล้นจอ (สูงสุด 6 คู่ = 12 ใบ = 4 แถว)
     switch(stage) {
-      case 1: return 3;  // 6 ใบ (2 แถว)
-      case 2: return 4;  // 8 ใบ (3 แถว)
-      case 3: return 5;  // 10 ใบ (4 แถว)
-      default: return 6; // 12 ใบ (4 แถวเต็มพอดี)
+      case 1: return 3;  // 6 ใบ
+      case 2: return 4;  // 8 ใบ
+      case 3: return 5;  // 10 ใบ
+      default: return 6; // 12 ใบ
     }
   } else {
-    // Desktop: จัดเต็มได้ถึง 10 คู่ (20 ใบ)
+    // Desktop
     switch(stage) {
       case 1: return 4;
       case 2: return 6;
@@ -180,11 +179,27 @@ function shuffle(arr){
   }
 }
 
+// --- แก้ไข: กำหนดความกว้างการ์ดให้เป็น 3 คอลัมน์เสมอ (ประมาณ 30-31%) ---
 function createCardElement(cardObj){
   const el = document.createElement('div');
   el.className = 'card';
   el.dataset.id = cardObj.id;
   el.dataset.instance = cardObj.instanceId;
+
+  if (window.innerWidth < 600) {
+      // มือถือ: ใช้ 31% เพื่อให้ได้ 3 ใบต่อแถว (มี gap นิดหน่อย)
+      // ผลลัพธ์:
+      // - 6 ใบ: 3, 3 (เต็ม)
+      // - 8 ใบ: 3, 3, 2 (กลาง) -> สมมาตร
+      // - 10 ใบ: 3, 3, 3, 1 (กลาง) -> สมมาตร
+      // - 12 ใบ: 3, 3, 3, 3 (เต็ม)
+      el.style.flex = '0 0 31%'; 
+      el.style.maxWidth = '31%';
+  } else {
+      // Desktop
+      el.style.flex = '0 0 15%'; 
+      el.style.maxWidth = '15%';
+  }
 
   const inner = document.createElement('div');
   inner.className = 'card-inner';
@@ -232,9 +247,19 @@ function createCardElement(cardObj){
   return el;
 }
 
+// --- แก้ไข: ใช้ Flexbox Center เพื่อให้เศษการ์ดอยู่ตรงกลาง ---
 function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
+
+  boardEl.style.display = 'flex';
+  boardEl.style.flexWrap = 'wrap';
+  boardEl.style.justifyContent = 'center'; // สำคัญ: จัดกึ่งกลางเพื่อให้สมมาตร
+  boardEl.style.alignContent = 'center';
+  boardEl.style.gap = '8px'; // ระยะห่าง
+  boardEl.style.padding = '8px';
+  boardEl.style.gridTemplateColumns = ''; // ล้างค่า Grid เดิมทิ้ง
+
   cards.forEach(c=>{
     const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
     const el = createCardElement(cardObj);
@@ -432,8 +457,11 @@ function showFinalScoreUI() {
       if (backBtn) backBtn.style.display = 'none';
       const returnBtn = document.getElementById('return-btn');
       if (returnBtn) returnBtn.style.display = 'none';
+      
+      // --- แก้ไข: ซ่อนกรอบสแกนเมื่อกลับสู่เมนู ---
       const scanFrame = document.getElementById('scan-frame');
-      if (scanFrame) scanFrame.style.display = 'flex';
+      if (scanFrame) scanFrame.style.display = 'none'; 
+      
     } catch(e){}
     stopTimer();
   });
