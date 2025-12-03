@@ -1,5 +1,5 @@
 // js/game.js
-// Memory Match game — Mobile Optimized (Max 12 cards to prevent overflow)
+// Memory Match game — Fixed: Scan Frame hidden when returning to Menu
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 4; 
@@ -33,20 +33,17 @@ let totalSecondsAccum = 0;
 
 const allAudioElements = new Set();
 
-// --- แก้ไข: ปรับลดจำนวนการ์ดบนมือถือไม่ให้เกิน 12 ใบ (6 คู่) ---
 function getPairsForStage(stage) {
   const isMobile = window.innerWidth < 600;
   
   if (isMobile) {
-    // Mobile: ลดจำนวนลงเพื่อให้ไม่ล้นจอ (สูงสุด 6 คู่ = 12 ใบ = 4 แถว)
     switch(stage) {
-      case 1: return 3;  // 6 ใบ (2 แถว)
-      case 2: return 4;  // 8 ใบ (3 แถว)
-      case 3: return 5;  // 10 ใบ (4 แถว)
-      default: return 6; // 12 ใบ (4 แถวเต็มพอดี)
+      case 1: return 3;  // 6 ใบ
+      case 2: return 4;  // 8 ใบ
+      case 3: return 5;  // 10 ใบ
+      default: return 6; // 12 ใบ
     }
   } else {
-    // Desktop: จัดเต็มได้ถึง 10 คู่ (20 ใบ)
     switch(stage) {
       case 1: return 4;
       case 2: return 6;
@@ -235,6 +232,19 @@ function createCardElement(cardObj){
 function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
+
+  if (window.innerWidth < 600) {
+    if (cards.length === 8) {
+        boardEl.style.gridTemplateColumns = 'repeat(2, 1fr)';
+    } else if (cards.length === 10) {
+        boardEl.style.gridTemplateColumns = 'repeat(2, 1fr)';
+    } else {
+        boardEl.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    }
+  } else {
+    boardEl.style.gridTemplateColumns = '';
+  }
+
   cards.forEach(c=>{
     const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
     const el = createCardElement(cardObj);
@@ -432,8 +442,11 @@ function showFinalScoreUI() {
       if (backBtn) backBtn.style.display = 'none';
       const returnBtn = document.getElementById('return-btn');
       if (returnBtn) returnBtn.style.display = 'none';
+      
+      // --- FIX: ซ่อนกรอบสแกนเมื่อกลับสู่เมนู (เพราะเมนูบังอยู่) ---
       const scanFrame = document.getElementById('scan-frame');
-      if (scanFrame) scanFrame.style.display = 'flex';
+      if (scanFrame) scanFrame.style.display = 'none'; 
+      
     } catch(e){}
     stopTimer();
   });
