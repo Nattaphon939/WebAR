@@ -1,5 +1,5 @@
 // js/game.js
-// Memory Match game — Mobile Optimized: 3 Columns for 1&4, Scattered for 2&3
+// Memory Match game — Mobile Optimized: Fits in 1 Screen (Max 3 Rows)
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 4; 
@@ -33,19 +33,18 @@ let totalSecondsAccum = 0;
 
 const allAudioElements = new Set();
 
+// กำหนดจำนวนคู่ในแต่ละด่าน
 function getPairsForStage(stage) {
   const isMobile = window.innerWidth < 900;
-  
   if (isMobile) {
-    // กำหนดจำนวนการ์ดสำหรับมือถือ
     switch(stage) {
-      case 1: return 3;  // 6 ใบ (3x2)
-      case 2: return 4;  // 8 ใบ (3x2 + 2)
-      case 3: return 5;  // 10 ใบ (3x3 + 1)
-      default: return 6; // 12 ใบ (3x4)
+      case 1: return 3;  // 6 ใบ
+      case 2: return 4;  // 8 ใบ
+      case 3: return 5;  // 10 ใบ
+      default: return 6; // 12 ใบ
     }
   } else {
-    // Desktop คงเดิม
+    // Desktop
     switch(stage) {
       case 1: return 4;
       case 2: return 6;
@@ -185,17 +184,21 @@ function createCardElement(cardObj){
   el.dataset.id = cardObj.id;
   el.dataset.instance = cardObj.instanceId;
 
-  // --- กำหนดขนาดการ์ดสำหรับมือถือ: 3 คอลัมน์ (ประมาณ 29-30%) ---
-  // การใช้ 3 คอลัมน์จะทำให้:
-  // - 6 ใบ (ด่าน 1): เต็ม 2 แถว
-  // - 12 ใบ (ด่าน 4): เต็ม 4 แถว
-  // - 8 ใบ (ด่าน 2): 3-3-2 (2 ใบสุดท้ายอยู่กลาง = กระจาย)
-  // - 10 ใบ (ด่าน 3): 3-3-3-1 (1 ใบสุดท้ายอยู่กลาง = กระจาย)
+  // --- กำหนดขนาดการ์ดตามจำนวน เพื่อให้ไม่ล้นจอ ---
   if (window.innerWidth < 900) {
-      el.style.flex = '0 0 29%'; 
-      el.style.maxWidth = '29%'; 
+      if (cards.length <= 6) {
+          // ด่าน 1: 6 ใบ -> แถวละ 3 (30%) -> 2 แถว
+          el.style.flex = '0 0 30%'; 
+          el.style.maxWidth = '30%';
+      } else {
+          // ด่าน 2, 3, 4 (8-12 ใบ): -> แถวละ 4 (22%) -> สูงสุด 3 แถว
+          // แบบนี้จะไม่มีวันเกิน 3 แถวครับ (4+4=8, 4+4+2=10, 4+4+4=12)
+          el.style.flex = '0 0 22%'; 
+          el.style.maxWidth = '22%';
+      }
   } else {
-      el.style.flex = '0 0 15%'; // Desktop
+      // Desktop
+      el.style.flex = '0 0 15%'; 
       el.style.maxWidth = '15%';
   }
 
@@ -249,14 +252,14 @@ function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
 
-  // ใช้ Flexbox และ justify-content: center เพื่อให้เศษที่เหลืออยู่ตรงกลาง (scattered)
+  // ใช้ Flexbox + Center เพื่อความยืดหยุ่นและสวยงาม
   boardEl.style.display = 'flex';
   boardEl.style.flexWrap = 'wrap';
   boardEl.style.justifyContent = 'center'; 
   boardEl.style.alignContent = 'center';
-  boardEl.style.gap = '12px'; // เพิ่มช่องว่างนิดหน่อยเพื่อให้ดูสวย
+  boardEl.style.gap = '10px';
   boardEl.style.padding = '10px';
-  boardEl.style.gridTemplateColumns = ''; // ล้างค่า Grid ทิ้ง
+  boardEl.style.gridTemplateColumns = ''; 
 
   cards.forEach(c=>{
     const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
