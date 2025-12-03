@@ -1,8 +1,8 @@
 // js/game.js
-// Memory Match game — updated: 4 Stages (Easy to Hard)
+// Memory Match game — Mobile Optimized (Max 12 cards to prevent overflow)
 
 const MANIFEST_PATH = './game_assets/manifest.json';
-const TOTAL_STAGES = 4; // ปรับเป็น 4 ด่าน
+const TOTAL_STAGES = 4; 
 
 const boardEl = document.getElementById('board');
 const movesEl = document.getElementById('moves');
@@ -26,25 +26,36 @@ let timer = null;
 let seconds = 0;
 let isMuted = false;
 let currentStage = 1;
-let currentPlayingAudio = null; // for stopping previous audio
+let currentPlayingAudio = null;
 
-// accumulators across stages
 let totalMovesAccum = 0;
 let totalSecondsAccum = 0;
 
 const allAudioElements = new Set();
 
-// ฟังก์ชันกำหนดจำนวนคู่การ์ดในแต่ละด่าน (Difficulty Progression)
+// --- แก้ไข: ปรับลดจำนวนการ์ดบนมือถือไม่ให้เกิน 12 ใบ (6 คู่) ---
 function getPairsForStage(stage) {
-  switch(stage) {
-    case 1: return 4;  // ด่าน 1: 4 คู่ (8 ใบ)
-    case 2: return 6;  // ด่าน 2: 6 คู่ (12 ใบ)
-    case 3: return 8;  // ด่าน 3: 8 คู่ (16 ใบ)
-    default: return 10; // ด่าน 4: 10 คู่ (20 ใบ - สูงสุดตามไฟล์ที่มี)
+  const isMobile = window.innerWidth < 600;
+  
+  if (isMobile) {
+    // Mobile: ลดจำนวนลงเพื่อให้ไม่ล้นจอ (สูงสุด 6 คู่ = 12 ใบ = 4 แถว)
+    switch(stage) {
+      case 1: return 3;  // 6 ใบ (2 แถว)
+      case 2: return 4;  // 8 ใบ (3 แถว)
+      case 3: return 5;  // 10 ใบ (4 แถว)
+      default: return 6; // 12 ใบ (4 แถวเต็มพอดี)
+    }
+  } else {
+    // Desktop: จัดเต็มได้ถึง 10 คู่ (20 ใบ)
+    switch(stage) {
+      case 1: return 4;
+      case 2: return 6;
+      case 3: return 8;
+      default: return 10;
+    }
   }
 }
 
-// SFX
 function maybeCreateAudioPaths(basePaths) {
   for (const p of basePaths) {
     try {
@@ -131,7 +142,6 @@ function resolvePath(val, type){
 
 function pickNItems(n) {
   const copy = (manifest||[]).slice();
-  // Shuffle เพื่อสุ่มว่าด่านนี้จะเอาคำไหนมาบ้าง
   for (let i = copy.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random()*(i+1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
@@ -140,7 +150,6 @@ function pickNItems(n) {
 }
 
 function buildCardObjectsForStage(stage) {
-  // ดึงจำนวนคู่ตามด่าน
   const pairsNeeded = getPairsForStage(stage);
   const chosen = pickNItems(pairsNeeded);
   
@@ -226,7 +235,6 @@ function createCardElement(cardObj){
 function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
-  // ปรับ CSS Grid ให้เหมาะสมกับจำนวนการ์ด (optional logic could go here, but css/game.css handles responsive well)
   cards.forEach(c=>{
     const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
     const el = createCardElement(cardObj);
@@ -341,11 +349,10 @@ function showStageWinUIAndAdvance() {
     try{ overlay.remove(); }catch{}
     currentStage++;
     startNextStage();
-  }, 1200); // รอสักนิดแล้วค่อยเริ่มด่านถัดไป
+  }, 1200);
 }
 
 function showFinalScoreUI() {
-  // คำนวณ Moves ขั้นต่ำทั้งหมดของทุกด่านรวมกัน
   let totalMinMoves = 0;
   for (let i = 1; i <= TOTAL_STAGES; i++) {
     totalMinMoves += getPairsForStage(i);
@@ -471,7 +478,7 @@ function startNextStage() {
   buildCardObjectsForStage(currentStage);
   renderBoard();
   startTimer();
-  // แสดงข้อความบอกด่านชั่วคราว
+  
   const toast = document.createElement('div');
   toast.style.position = 'fixed';
   toast.style.top = '50%'; toast.style.left = '50%';
@@ -494,12 +501,11 @@ async function startGameFlow(initialStage = 1){
   currentStage = initialStage;
   totalMovesAccum = 0;
   totalSecondsAccum = 0;
-  startNextStage(); // ใช้ฟังก์ชันนี้เพื่อเริ่มด่านแรก
+  startNextStage(); 
 }
 
 btnRestart && btnRestart.addEventListener('click', ()=>{
   stopAllAudio();
-  // รีเซ็ตด่านปัจจุบัน
   startNextStage();
 });
 
