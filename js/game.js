@@ -1,9 +1,8 @@
 // js/game.js
-// Memory Match game — updated: robust mute (mutes all audio elements, stops audio immediately)
+// Memory Match game — updated: 4 Stages (Easy to Hard)
 
 const MANIFEST_PATH = './game_assets/manifest.json';
-const TOTAL_STAGES = 2;
-const PAIRS_PER_STAGE = 6; // 6 pairs = 12 cards per stage
+const TOTAL_STAGES = 4; // ปรับเป็น 4 ด่าน
 
 const boardEl = document.getElementById('board');
 const movesEl = document.getElementById('moves');
@@ -33,19 +32,27 @@ let currentPlayingAudio = null; // for stopping previous audio
 let totalMovesAccum = 0;
 let totalSecondsAccum = 0;
 
-// keep reference to every Audio created so we can mute/unmute globally
 const allAudioElements = new Set();
 
-// SFX: try wav then mp3 fallback
+// ฟังก์ชันกำหนดจำนวนคู่การ์ดในแต่ละด่าน (Difficulty Progression)
+function getPairsForStage(stage) {
+  switch(stage) {
+    case 1: return 4;  // ด่าน 1: 4 คู่ (8 ใบ)
+    case 2: return 6;  // ด่าน 2: 6 คู่ (12 ใบ)
+    case 3: return 8;  // ด่าน 3: 8 คู่ (16 ใบ)
+    default: return 10; // ด่าน 4: 10 คู่ (20 ใบ - สูงสุดตามไฟล์ที่มี)
+  }
+}
+
+// SFX
 function maybeCreateAudioPaths(basePaths) {
   for (const p of basePaths) {
     try {
       const a = new Audio(p);
       a.preload = 'auto';
-      // default muted state follows current isMuted
       a.muted = isMuted;
       a.volume = isMuted ? 0 : 1;
-      a.addEventListener('error', ()=>{ /* ignore */ });
+      a.addEventListener('error', ()=>{});
       allAudioElements.add(a);
       return a;
     } catch(e){}
@@ -59,21 +66,16 @@ const sfx = {
   win: maybeCreateAudioPaths(['game_assets/sfx/win.mp3','game_assets/sfx/win.wav'])
 };
 
-// apply mute/unmute to all tracked audio elements (including ones created later that are added to the Set)
 function applyMuteToAll(muted) {
   allAudioElements.forEach(a => {
     try {
       a.muted = muted;
-      if (muted) {
-        try { a.volume = 0; } catch(e){}
-      } else {
-        try { a.volume = 1; } catch(e){}
-      }
+      if (muted) { try { a.volume = 0; } catch(e){} } 
+      else { try { a.volume = 1; } catch(e){} }
     } catch(e){}
   });
 }
 
-// safe play: respects isMuted and audio.muted
 function safePlay(audio) {
   if (!audio) return;
   if (isMuted) return;
@@ -82,7 +84,6 @@ function safePlay(audio) {
   if (p && p.catch) p.catch(()=>{});
 }
 
-// stop current word/meaning audio
 function stopCurrentPlaying() {
   if (currentPlayingAudio) {
     try { currentPlayingAudio.pause(); currentPlayingAudio.currentTime = 0; } catch(e){}
@@ -90,14 +91,11 @@ function stopCurrentPlaying() {
   }
 }
 
-// stop all audio: currentPlaying + all sfx + any tracked audio
 function stopAllAudio() {
   stopCurrentPlaying();
   try {
     allAudioElements.forEach(a => {
-      if (a) {
-        try { a.pause(); a.currentTime = 0; } catch(e){}
-      }
+      if (a) { try { a.pause(); a.currentTime = 0; } catch(e){} }
     });
   } catch(e){}
 }
@@ -105,10 +103,10 @@ function stopAllAudio() {
 function startTimer() {
   clearInterval(timer);
   seconds = 0;
-  timerEl.textContent = `Time: 0s`;
+  if(timerEl) timerEl.textContent = `Time: 0s`;
   timer = setInterval(()=>{
     seconds++;
-    timerEl.textContent = `Time: ${seconds}s`;
+    if(timerEl) timerEl.textContent = `Time: ${seconds}s`;
   },1000);
 }
 function stopTimer(){ clearInterval(timer); }
@@ -119,7 +117,7 @@ async function loadManifest(){
     manifest = await res.json();
   }catch(e){
     console.error('manifest load err',e);
-    if (msgEl) msgEl.textContent = 'ไม่พบ manifest.json — วางไฟล์ manifest ที่ game_assets/manifest.json';
+    if (msgEl) msgEl.textContent = 'ไม่พบ manifest.json';
   }
 }
 
@@ -133,6 +131,7 @@ function resolvePath(val, type){
 
 function pickNItems(n) {
   const copy = (manifest||[]).slice();
+  // Shuffle เพื่อสุ่มว่าด่านนี้จะเอาคำไหนมาบ้าง
   for (let i = copy.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random()*(i+1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
@@ -141,7 +140,10 @@ function pickNItems(n) {
 }
 
 function buildCardObjectsForStage(stage) {
-  const chosen = pickNItems(PAIRS_PER_STAGE);
+  // ดึงจำนวนคู่ตามด่าน
+  const pairsNeeded = getPairsForStage(stage);
+  const chosen = pickNItems(pairsNeeded);
+  
   cards = [];
   chosen.forEach(it => {
     const id = it.id || it.name || '';
@@ -193,7 +195,6 @@ function createCardElement(cardObj){
   inner.appendChild(front);
   el.appendChild(inner);
 
-  // prepare audio objects and track them
   if (cardObj.wordAudio) {
     try {
       const wa = new Audio(cardObj.wordAudio);
@@ -218,7 +219,6 @@ function createCardElement(cardObj){
     } catch(e){ el._meaningAudio = null; }
   } else el._meaningAudio = null;
 
-  // click handler — robust
   el.addEventListener('click', ()=> onCardClick(el, cardObj));
   return el;
 }
@@ -226,6 +226,7 @@ function createCardElement(cardObj){
 function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
+  // ปรับ CSS Grid ให้เหมาะสมกับจำนวนการ์ด (optional logic could go here, but css/game.css handles responsive well)
   cards.forEach(c=>{
     const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
     const el = createCardElement(cardObj);
@@ -234,21 +235,15 @@ function renderBoard(){
 }
 
 function onCardClick(el, cardObj){
-  // safety guards
   if (lockBoard) return;
   if (el === firstCard) return;
-  if (el.classList.contains('flipped')) return; // prevent double-flip bug
+  if (el.classList.contains('flipped')) return;
   if (el.classList.contains('matched')) return;
 
-  // flip visual
   el.classList.add('flipped');
-
-  // stop previously playing word/meaning
   stopCurrentPlaying();
-
   safePlay(sfx.flip);
 
-  // play word audio only if not muted and audio exists
   if (el._wordAudio && !isMuted) {
     currentPlayingAudio = el._wordAudio;
     try { currentPlayingAudio.currentTime = 0; } catch(e){}
@@ -274,13 +269,11 @@ function onCardClick(el, cardObj){
     setTimeout(()=> onMatch(firstCard, secondCard), 350);
   } else {
     setTimeout(()=>{
-      // add wrong animation
       firstCard.classList.add('wrong');
       secondCard.classList.add('wrong');
       safePlay(sfx.wrong);
 
       setTimeout(()=>{
-        // only unflip if they are not matched
         if (!firstCard.classList.contains('matched')) firstCard.classList.remove('flipped');
         if (!secondCard.classList.contains('matched')) secondCard.classList.remove('flipped');
         firstCard.classList.remove('wrong');
@@ -293,18 +286,13 @@ function onCardClick(el, cardObj){
 
 function onMatch(a,b){
   safePlay(sfx.match);
-  // stop any playing word audio before meaning
   stopCurrentPlaying();
 
-  // ensure both stay flipped and marked matched
   a.classList.add('matched','flipped');
   b.classList.add('matched','flipped');
-
-  // disable further interactions
   a.style.pointerEvents = 'none';
   b.style.pointerEvents = 'none';
 
-  // play meaning audio if exists (and not muted)
   if (a._meaningAudio && !isMuted) {
     currentPlayingAudio = a._meaningAudio;
     try { currentPlayingAudio.currentTime = 0; } catch(e){}
@@ -328,11 +316,9 @@ function resetSelection(){
 function checkWin(){
   if (matches * 2 === cards.length){
     stopTimer();
-    // accumulate
     totalMovesAccum += moves;
     totalSecondsAccum += seconds;
 
-    // stop any playing audio, then play final win and proceed
     stopAllAudio();
     safePlay(sfx.win);
 
@@ -355,18 +341,22 @@ function showStageWinUIAndAdvance() {
     try{ overlay.remove(); }catch{}
     currentStage++;
     startNextStage();
-  }, 900);
+  }, 1200); // รอสักนิดแล้วค่อยเริ่มด่านถัดไป
 }
 
 function showFinalScoreUI() {
-  const totalMinMoves = TOTAL_STAGES * PAIRS_PER_STAGE;
+  // คำนวณ Moves ขั้นต่ำทั้งหมดของทุกด่านรวมกัน
+  let totalMinMoves = 0;
+  for (let i = 1; i <= TOTAL_STAGES; i++) {
+    totalMinMoves += getPairsForStage(i);
+  }
+
   const totalMoves = Math.max(1, totalMovesAccum);
   let efficiency = totalMinMoves / totalMoves;
   if (efficiency > 1) efficiency = 1;
   if (efficiency < 0) efficiency = 0;
   const score = Math.round(efficiency * 10);
 
-  // persistent score overlay with buttons
   const container = document.createElement('div');
   container.className = 'score-overlay';
   container.id = 'score-overlay';
@@ -374,19 +364,18 @@ function showFinalScoreUI() {
   const card = document.createElement('div');
   card.className = 'score-card score-pulse';
   card.innerHTML = `
-    <h3>สรุปผลการเล่น</h3>
+    <h3>🎉 ยินดีด้วย! ผ่านครบ ${TOTAL_STAGES} ด่าน 🎉</h3>
     <div class="score-number" id="score-number">0</div>
-    <div style="font-size:13px;margin-top:8px;color:#002226">คะแนนจากความแม่นยำ (เต็ม 10)</div>
-    <div style="font-size:12px;margin-top:8px;color:#002226">Moves: ${totalMoves} • Time: ${totalSecondsAccum}s</div>
+    <div style="font-size:13px;margin-top:8px;color:#002226">คะแนนความแม่นยำ (เต็ม 10)</div>
+    <div style="font-size:12px;margin-top:8px;color:#002226">Total Moves: ${totalMoves} • Total Time: ${totalSecondsAccum}s</div>
     <div class="score-controls">
-      <button class="score-btn" id="play-again-btn">เล่นอีกครั้ง</button>
+      <button class="score-btn" id="play-again-btn">เล่นใหม่</button>
       <button class="score-btn" id="back-menu-btn">กลับสู่เมนู</button>
     </div>
   `;
   container.appendChild(card);
   document.body.appendChild(container);
 
-  // animate score
   const display = document.getElementById('score-number');
   let cur = 0;
   const duration = 900;
@@ -399,11 +388,9 @@ function showFinalScoreUI() {
   }
   requestAnimationFrame(step);
 
-  launchConfetti(40);
+  launchConfetti(50);
 
-  // play again
   document.getElementById('play-again-btn').addEventListener('click', ()=> {
-    // stop all audio immediately
     stopAllAudio();
     try { document.getElementById('score-overlay').remove(); } catch(e){}
     clearConfetti();
@@ -413,9 +400,7 @@ function showFinalScoreUI() {
     startNextStage();
   });
 
-  // back to menu
   document.getElementById('back-menu-btn').addEventListener('click', ()=> {
-    // stop all audio immediately
     stopAllAudio();
     stopCurrentPlaying();
     try {
@@ -431,7 +416,6 @@ function showFinalScoreUI() {
       const gameOverlay = document.getElementById('game-overlay');
       if (gameOverlay) gameOverlay.remove();
     } catch(e){}
-    // show career menu and career actions, but hide back & return button
     try {
       const careerMenu = document.getElementById('career-menu');
       if (careerMenu) careerMenu.style.display = 'flex';
@@ -444,12 +428,10 @@ function showFinalScoreUI() {
       const scanFrame = document.getElementById('scan-frame');
       if (scanFrame) scanFrame.style.display = 'flex';
     } catch(e){}
-
     stopTimer();
   });
 }
 
-// confetti helpers
 function launchConfetti(count = 24) {
   const colors = ['#FFEC5C','#FF5C7C','#5CFFB1','#5CC7FF','#C85CFF'];
   for (let i = 0; i < count; i++) {
@@ -485,10 +467,25 @@ function clearConfetti(){
 
 function startNextStage() {
   moves = 0; matches = 0;
-  if (movesEl) movesEl.textContent = `Moves: ${moves}`;
+  if (movesEl) movesEl.textContent = `Moves: 0`;
   buildCardObjectsForStage(currentStage);
   renderBoard();
   startTimer();
+  // แสดงข้อความบอกด่านชั่วคราว
+  const toast = document.createElement('div');
+  toast.style.position = 'fixed';
+  toast.style.top = '50%'; toast.style.left = '50%';
+  toast.style.transform = 'translate(-50%, -50%)';
+  toast.style.background = 'rgba(0,0,0,0.7)';
+  toast.style.color = '#00ffff';
+  toast.style.padding = '12px 24px';
+  toast.style.borderRadius = '12px';
+  toast.style.zIndex = '10007';
+  toast.style.fontSize = '20px';
+  toast.style.fontWeight = 'bold';
+  toast.innerText = `ด่าน ${currentStage}`;
+  document.body.appendChild(toast);
+  setTimeout(() => { try{toast.remove()}catch{} }, 1500);
 }
 
 async function startGameFlow(initialStage = 1){
@@ -497,33 +494,19 @@ async function startGameFlow(initialStage = 1){
   currentStage = initialStage;
   totalMovesAccum = 0;
   totalSecondsAccum = 0;
-  buildCardObjectsForStage(currentStage);
-  renderBoard();
-  moves = 0; matches = 0;
-  if (movesEl) movesEl.textContent = `Moves: 0`;
-  if (msgEl) msgEl.textContent = '';
-  startTimer();
+  startNextStage(); // ใช้ฟังก์ชันนี้เพื่อเริ่มด่านแรก
 }
 
-// RESTART: stop audio as requested, then reset board
 btnRestart && btnRestart.addEventListener('click', ()=>{
-  // stop all sounds immediately
   stopAllAudio();
-
-  shuffle(cards);
-  renderBoard();
-  moves = 0; matches = 0;
-  if (movesEl) movesEl.textContent = `Moves: 0`;
-  if (msgEl) msgEl.textContent = '';
-  startTimer();
+  // รีเซ็ตด่านปัจจุบัน
+  startNextStage();
 });
 
-// MUTE/UNMUTE: apply mute to all tracked audio elements and stop sounds when muting
 btnMute && btnMute.addEventListener('click', ()=>{
   isMuted = !isMuted;
   applyMuteToAll(isMuted);
   if (isMuted) {
-    // if muting, stop any playing audio immediately
     stopAllAudio();
     if (btnMute) btnMute.textContent = '🔇 Muted';
   } else {
@@ -531,7 +514,6 @@ btnMute && btnMute.addEventListener('click', ()=>{
   }
 });
 
-// camera start helper
 async function startCameraAndGame() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }});
@@ -545,13 +527,10 @@ async function startCameraAndGame() {
     return;
   }
 
-  // preload sfx (they are already created earlier)
   Object.values(sfx).forEach(a => { try{ a && a.load(); allAudioElements.add(a);} catch{} });
-
   startGameFlow(1);
 }
 
-// Attach start listener robustly
 if (startButton) {
   startButton.addEventListener('click', async () => {
     await startCameraAndGame();
@@ -561,7 +540,6 @@ if (startButton) {
   setTimeout(()=>{ startCameraAndGame(); if (startOverlay) startOverlay.style.display = 'none'; }, 30);
 }
 
-// cleanup
 window.addEventListener('beforeunload', ()=> {
   stopAllAudio();
   try {
