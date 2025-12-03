@@ -1,4 +1,4 @@
-/* css/style.css - Thicker Line + Clear Bounce Animation */
+/* css/style.css - Fix Camera Fullscreen + Thicker Scan */
 
 :root {
   --accent: #00ffff;
@@ -18,6 +18,18 @@ html, body {
   inset: 0;
   display: none;
   background: #000;
+  z-index: 0; /* ให้แน่ใจว่าอยู่หลัง UI */
+}
+
+/* --- FIX: บังคับวิดีโอ MindAR ให้เต็มจอทันที (แก้ปัญหากล้องเล็กมุมซ้าย) --- */
+#container video {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  z-index: -1 !important; /* ดันไปหลังสุด */
 }
 
 /* --- LOADING SCREEN --- */
@@ -99,29 +111,20 @@ html, body {
 .bl { bottom: 0; left: 0; border-bottom-width: 7px; border-left-width: 7px; }
 .br { bottom: 0; right: 0; border-bottom-width: 7px; border-right-width: 7px; }
 
-/* --- เส้นสแกน (แก้ไข Animation) --- */
+/* --- เส้นสแกน (Animation) --- */
 .scan-line {
   position: absolute;
   width: 100%;
-  height: 5px; /* ความหนา */
+  height: 5px;
   background: #ffffff;
-  /* แสงฟุ้งตลอดเวลา */
   box-shadow: 0 0 12px rgba(255, 255, 255, 0.9); 
   left: 0;
-  
-  /* alternate = วิ่งไปแล้ววิ่งกลับ (บน->ล่าง แล้ว ล่าง->บน) */
   animation: scan-move 3s ease-in-out infinite alternate;
 }
 
 @keyframes scan-move {
-  /* เริ่มต้น: บนสุด */
-  0% {
-    top: 0%;
-  }
-  /* สิ้นสุด: ล่างสุด */
-  100% {
-    top: 98%; /* 98% เพื่อไม่ให้เลยกรอบ */
-  }
+  0% { top: 0%; }
+  100% { top: 98%; }
 }
 
 /* Logic ซ่อนกรอบเมื่อมีคลาส no-scan */
@@ -135,7 +138,7 @@ body.no-scan #scan-frame::after {
   pointer-events: none !important;
 }
 
-/* --- CAREER MENU & UI (ส่วนเดิม) --- */
+/* --- CAREER MENU & UI --- */
 
 #career-menu {
   position: fixed;
