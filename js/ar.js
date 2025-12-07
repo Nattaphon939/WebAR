@@ -117,7 +117,7 @@ function attachContentToAnchor(gltf, video) {
     
     // ✅ แก้ไขจุดที่ 1: เปลี่ยนจาก -0.4 เป็น 0.4 (หมุนกลับด้าน)
     try { 
-        gltfModel.rotation.set(0, 0.1, 0); 
+        gltfModel.rotation.set(0, 0.15, 0); 
         gltfModel.updateMatrixWorld(true); 
     } catch(e){}
 
@@ -169,7 +169,7 @@ function attachContentToAnchor(gltf, video) {
             gltfModel.scale.set(0.5, 0.5, 0.5);
             
             // ✅ แก้ไขจุดที่ 2: เปลี่ยนจาก -0.4 เป็น 0.4 เช่นกัน
-            gltfModel.rotation.set(0, 0.1, 0); 
+            gltfModel.rotation.set(0, 0.15, 0); 
             
             gltfModel.updateMatrixWorld(true);
             
