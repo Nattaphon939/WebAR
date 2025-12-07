@@ -1,8 +1,14 @@
 // js/game.js
-// Memory Match game — Mobile Optimized (Max 12 cards to prevent overflow)
+// Memory Match game — Optimized to use Preloaded Assets
+
+// 1. นำเข้า getAssets เพื่อดึงไฟล์ที่โหลดไว้แล้ว
+import { getAssets } from './loader.js';
 
 const MANIFEST_PATH = './game_assets/manifest.json';
 const TOTAL_STAGES = 4; 
+
+// ดึง Assets ที่โหลดไว้ใน Memory
+const loadedAssets = getAssets().gameAssets || {};
 
 const boardEl = document.getElementById('board');
 const movesEl = document.getElementById('moves');
@@ -33,20 +39,16 @@ let totalSecondsAccum = 0;
 
 const allAudioElements = new Set();
 
-// --- แก้ไข: ปรับลดจำนวนการ์ดบนมือถือไม่ให้เกิน 12 ใบ (6 คู่) ---
 function getPairsForStage(stage) {
   const isMobile = window.innerWidth < 600;
-  
   if (isMobile) {
-    // Mobile: ลดจำนวนลงเพื่อให้ไม่ล้นจอ (สูงสุด 6 คู่ = 12 ใบ = 4 แถว)
     switch(stage) {
-      case 1: return 3;  // 6 ใบ (2 แถว)
-      case 2: return 4;  // 8 ใบ (3 แถว)
-      case 3: return 5;  // 10 ใบ (4 แถว)
-      default: return 6; // 12 ใบ (4 แถวเต็มพอดี)
+      case 1: return 3;
+      case 2: return 4;
+      case 3: return 5;
+      default: return 6;
     }
   } else {
-    // Desktop: จัดเต็มได้ถึง 10 คู่ (20 ใบ)
     switch(stage) {
       case 1: return 4;
       case 2: return 6;
@@ -56,10 +58,23 @@ function getPairsForStage(stage) {
   }
 }
 
+// 2. ฟังก์ชันช่วยค้นหา Blob URL (ถ้ามีให้ใช้เลย ถ้าไม่มีให้ใช้ Path เดิม)
+function getAssetUrl(path) {
+    if (!path) return null;
+    // ตัด prefix ออกเพื่อให้ตรงกับ key ใน loadedAssets (เช่น 'game_assets/cards/img.png' -> 'cards/img.png')
+    const key = path.replace('game_assets/', '').replace('./game_assets/', '');
+    if (loadedAssets[key]) {
+        return loadedAssets[key]; // ใช้ Blob URL ที่โหลดไว้แล้ว (เร็วมาก)
+    }
+    return path; // ถ้าไม่มี ให้ใช้ Path เดิมโหลดใหม่
+}
+
 function maybeCreateAudioPaths(basePaths) {
   for (const p of basePaths) {
     try {
-      const a = new Audio(p);
+      // ใช้ getAssetUrl เพื่อเช็ค Blob ก่อน
+      const finalPath = getAssetUrl(p);
+      const a = new Audio(finalPath);
       a.preload = 'auto';
       a.muted = isMuted;
       a.volume = isMuted ? 0 : 1;
@@ -70,6 +85,8 @@ function maybeCreateAudioPaths(basePaths) {
   }
   return null;
 }
+
+// โหลด SFX ผ่าน Cache
 const sfx = {
   flip: maybeCreateAudioPaths(['game_assets/sfx/flip.wav','game_assets/sfx/flip.mp3']),
   match: maybeCreateAudioPaths(['game_assets/sfx/match.wav','game_assets/sfx/match.mp3']),
@@ -132,12 +149,17 @@ async function loadManifest(){
   }
 }
 
+// 3. ปรับปรุง resolvePath ให้คืนค่าเป็น Blob URL
 function resolvePath(val, type){
   if (!val) return null;
-  if (val.includes('/') || val.startsWith('./')) return val;
-  if (type === 'image') return `game_assets/cards/${val}`;
-  if (type === 'audio') return `game_assets/audio/${val}`;
-  return val;
+  let rawPath = val;
+  
+  if (!val.includes('/') && !val.startsWith('./')) {
+      if (type === 'image') rawPath = `game_assets/cards/${val}`;
+      if (type === 'audio') rawPath = `game_assets/audio/${val}`;
+  }
+  
+  return getAssetUrl(rawPath);
 }
 
 function pickNItems(n) {
