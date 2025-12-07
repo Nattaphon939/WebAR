@@ -1,10 +1,16 @@
 // /WEB/js/ui.js
 import * as AR from './ar.js';
 import { initButtons } from './buttons.js';
-import { CONFIG } from './config.js'; // <--- 1. นำเข้าไฟล์ตั้งค่า
+import { CONFIG } from './config.js'; 
+
+// ตัวแปรกันทำงานซ้ำ (Fix double overlay bug)
+let isUIInitialized = false;
 
 export function initUI(){
-  // init career buttons with small bars and ready/disabled states
+  // ถ้าเคย init ไปแล้ว ให้หยุดทันที (ป้องกันปุ่มเบิ้ล)
+  if (isUIInitialized) return;
+  
+  // เริ่มทำงาน
   initButtons();
 
   // back button
@@ -35,7 +41,6 @@ export function initUI(){
       const scanFrame = document.getElementById('scan-frame');
       if (scanFrame) scanFrame.style.display = 'none';
 
-      // load game overlay
       try {
         const res = await fetch('game.html');
         if (!res.ok) throw new Error('game not found');
@@ -50,7 +55,7 @@ export function initUI(){
           overlay.style.display='flex'; overlay.style.alignItems='stretch'; overlay.style.justifyContent='stretch';
           document.body.appendChild(overlay);
         }
-        // copy styles + body
+        
         const links = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
         links.forEach(link => {
           const href = link.getAttribute('href');
@@ -61,14 +66,12 @@ export function initUI(){
         });
         overlay.innerHTML = doc.body.innerHTML;
 
-        // add script loader for game.js
         const existingScript = document.querySelector('script[data-game-module]');
         if (existingScript) existingScript.remove();
         const s = document.createElement('script');
         s.type = 'module'; s.src = 'js/game.js?ts=' + Date.now(); s.setAttribute('data-game-module','1');
         document.body.appendChild(s);
 
-        // add close button
         const closeBtn = overlay.querySelector('#game-close-btn') || (() => {
           const b = document.createElement('button'); b.id='game-close-btn'; b.textContent='✕';
           Object.assign(b.style, { position:'fixed', left:'12px', top:'12px', zIndex:10010, padding:'8px 10px', borderRadius:'8px', border:'none', background:'rgba(0,0,0,0.6)', color:'#00ffff', cursor:'pointer', fontSize:'16px' });
@@ -91,7 +94,6 @@ export function initUI(){
           document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
           try { AR.resetToIdle(); } catch(e){}
           
-          // Show Menu Again
           if (careerMenu) careerMenu.style.display = 'flex';
           const careerActions = document.getElementById('career-actions');
           if (careerActions) careerActions.style.display = 'flex';
@@ -116,14 +118,12 @@ export function initUI(){
   // --- SURVEY BUTTON ---
   if (surveyBtn) {
     surveyBtn.addEventListener('click', ()=> {
-      // ซ่อนเมนู
       const careerMenu = document.getElementById('career-menu');
       if (careerMenu) careerMenu.style.display = 'none';
       if (backBtn) backBtn.style.display = 'none';
       const scanFrame = document.getElementById('scan-frame');
       if (scanFrame) scanFrame.style.display = 'none';
 
-      // สร้าง Overlay
       const overlay = document.createElement('div');
       overlay.id = 'survey-overlay';
       Object.assign(overlay.style, {
@@ -131,7 +131,6 @@ export function initUI(){
         background: '#fff', display: 'flex', flexDirection: 'column'
       });
 
-      // ส่วนหัว (ปุ่มปิด)
       const header = document.createElement('div');
       Object.assign(header.style, {
         display: 'flex', justifyContent: 'flex-end', padding: '10px', background: '#000'
@@ -146,17 +145,13 @@ export function initUI(){
 
       closeBtn.onclick = () => {
         overlay.remove();
-        // คืนค่าเมนูกลับมา
         if (careerMenu) careerMenu.style.display = 'flex';
       };
 
       header.appendChild(closeBtn);
       overlay.appendChild(header);
 
-      // สร้าง Iframe
       const iframe = document.createElement('iframe');
-      
-      // --- 2. ใช้ลิงก์จากไฟล์ config แทน ---
       iframe.src = CONFIG.SURVEY_URL; 
       
       Object.assign(iframe.style, {
@@ -175,4 +170,7 @@ export function initUI(){
     if (backBtn) backBtn.style.display = 'none';
     window.open('#', '_blank');
   });
+
+  // ทำเครื่องหมายว่า init เสร็จแล้ว
+  isUIInitialized = true;
 }
