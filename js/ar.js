@@ -1,15 +1,15 @@
-// /WEB/js/ar.js (Clean Version)
+// /WEB/js/ar.js (Fixed: Rotation Direction)
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 
-// 1. นำเข้า Loader และ Data (ลดความซ้ำซ้อน)
+// 1. นำเข้า Loader และ Data
 import { ensureCareerAssets, getAssets, JOB_ROOT, careers } from './loader.js';
 
-// 2. นำเข้า Utils (แยกฟังก์ชันเครื่องมือ)
+// 2. นำเข้า Utils
 import * as Utils from './ar-utils.js';
 
 // --- Global State ---
-const assets = getAssets(); // ใช้ Object เดียวกับ loader
+const assets = getAssets();
 let mindarThree, renderer, scene, camera;
 let anchor, contentGroup = null; 
 let gltfModel = null, videoElem = null, videoMesh = null;
@@ -64,7 +64,6 @@ function checkBothFinished() {
   if (backBtn()) backBtn().style.display = 'none';
   if (scanFrame()) scanFrame().style.display = 'none';
 
-  // Emit event ว่าจบแล้ว
   try { document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: lastCareer } })); } catch(e){}
 }
 
@@ -110,12 +109,17 @@ function attachContentToAnchor(gltf, video) {
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
     // Config Scale/Position
-    gltfModel.scale.set(0.7, 0.7, 0.7);
-    gltfModel.position.set(-0.25, -0.45, 0.05);
+    gltfModel.scale.set(0.5, 0.5, 0.5);
+    gltfModel.position.set(-0.25, -0.45, 0.1);
     gltfModel.visible = false;
     
     if (contentGroup) contentGroup.add(gltfModel);
-    try { gltfModel.rotation.set(0,0,0); gltfModel.quaternion.set(0,0,0,1); gltfModel.updateMatrixWorld(true); } catch(e){}
+    
+    // ✅ แก้ไขจุดที่ 1: เปลี่ยนจาก -0.4 เป็น 0.4 (หมุนกลับด้าน)
+    try { 
+        gltfModel.rotation.set(0, 0.1, 0); 
+        gltfModel.updateMatrixWorld(true); 
+    } catch(e){}
 
     // Animation
     const animations = (gltf.animations && gltf.animations.length > 0) ? gltf.animations : (gltfModel.userData && Array.isArray(gltfModel.userData._clips) ? gltfModel.userData._clips : null);
@@ -162,8 +166,11 @@ function attachContentToAnchor(gltf, video) {
 
         if (gltfModel) {
             gltfModel.visible = true;
-            gltfModel.scale.set(0.7, 0.7, 0.7);
-            gltfModel.rotation.set(0, 0, 0); gltfModel.quaternion.set(0, 0, 0, 1);
+            gltfModel.scale.set(0.5, 0.5, 0.5);
+            
+            // ✅ แก้ไขจุดที่ 2: เปลี่ยนจาก -0.4 เป็น 0.4 เช่นกัน
+            gltfModel.rotation.set(0, 0.1, 0); 
+            
             gltfModel.updateMatrixWorld(true);
             
             const targetX = -0.35; 
@@ -174,9 +181,9 @@ function attachContentToAnchor(gltf, video) {
             const box = new THREE.Box3().setFromObject(gltfModel);
             const feetOffset = box.min.y; 
             if (isFinite(feetOffset) && Math.abs(feetOffset) < 10) {
-                 gltfModel.position.set(targetX, videoBottom - feetOffset, 0.05);
+                 gltfModel.position.set(targetX, videoBottom - feetOffset, 0.1);
             } else {
-                 gltfModel.position.set(targetX, videoBottom, 0.05);
+                 gltfModel.position.set(targetX, videoBottom, 0.1);
             }
             gltfModel.updateMatrixWorld(true);
         }
