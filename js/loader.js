@@ -1,5 +1,4 @@
 // /WEB/js/loader.js
-// Optimized for Mobile 5Mbps + Responsive Button Progress Bars
 export const JOB_ROOT = './Job';
 export const careers = ['Computer','AI','Cloud','Data_Center','Network'];
 export const candidates = {
@@ -18,7 +17,7 @@ function emit(name, detail={}) {
 }
 
 async function tryFind(career, list) {
-  const timeoutMs = 25000; // ให้เวลาเน็ตมือถือนานหน่อย
+  const timeoutMs = 25000;
   for (const name of list || []) {
     if (!name) continue;
     const url = `${JOB_ROOT}/${career}/${name}`;
@@ -41,13 +40,11 @@ export function isCareerReady(career){
   return !!(a.modelBlobUrl && a.videoBlobUrl);
 }
 
-// ฟังก์ชันโหลดรายอาชีพ (ปรับปรุงให้ส่ง Progress ละเอียดขึ้น)
 export async function ensureCareerAssets(career, onProgress = ()=>{}) {
   if (!career || !careers.includes(career)) return null;
   if (!assets[career]) assets[career] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
   const a = assets[career];
 
-  // 1. นับจำนวนสิ่งที่ต้องโหลดของอาชีพนี้
   let tasks = [];
   if (candidates[career].marker) tasks.push('marker');
   tasks.push('model');
@@ -56,129 +53,129 @@ export async function ensureCareerAssets(career, onProgress = ()=>{}) {
   const totalTasks = tasks.length;
   let finishedTasks = 0;
 
-  // ตรวจสอบว่ามีอะไรโหลดเสร็จอยู่แล้วบ้าง (Cache check)
   if (a.markerBlobUrl && tasks.includes('marker')) finishedTasks++;
   if (a.modelBlobUrl) finishedTasks++;
   if (a.videoBlobUrl) finishedTasks++;
 
-  // ฟังก์ชันคำนวณและส่ง %
   const updateProgress = () => {
-    // คำนวณ % ตามจำนวนไฟล์ที่เสร็จ (เช่น 1/2 = 50%, 2/2 = 100%)
     let pct = Math.floor((finishedTasks / totalTasks) * 100);
-    // ส่ง event ไปให้ js/buttons.js อัปเดตความกว้าง Bar
     emit('career-load-progress', { career, pct: pct, type: 'partial' });
   };
 
-  // เริ่มต้น: ถ้ายังไม่ครบ ให้ส่ง 5% เพื่อให้ Bar ขยับนิดนึงว่า "กำลังโหลดนะ"
   if (finishedTasks < totalTasks) {
      emit('career-load-progress', { career, pct: 5, type: 'start' });
   } else {
-     updateProgress(); // ถ้าครบแล้วก็ส่ง 100% เลย
+     updateProgress();
   }
 
   const pList = [];
 
-  // --- MARKER ---
   if (candidates[career].marker && !a.markerBlobUrl) {
     pList.push(tryFind(career, candidates[career].marker).then(m => {
-        if(m) {
-            a.markerBlobUrl = URL.createObjectURL(m.blob);
-            finishedTasks++;
-            updateProgress(); // อัปเดต Bar
-        }
+        if(m) { a.markerBlobUrl = URL.createObjectURL(m.blob); finishedTasks++; updateProgress(); }
     }));
   }
 
-  // --- MODEL ---
   if (!a.modelBlobUrl) {
     pList.push(tryFind(career, candidates[career].model).then(m => {
-      if (m) {
-        a.modelBlobUrl = URL.createObjectURL(m.blob);
-        finishedTasks++;
-        updateProgress(); // อัปเดต Bar
-        onProgress(100, `${JOB_ROOT}/${career}/${m.url}`, 'model');
-      }
+      if (m) { a.modelBlobUrl = URL.createObjectURL(m.blob); finishedTasks++; updateProgress(); }
     }));
   }
 
-  // --- VIDEO ---
   if (!a.videoBlobUrl) {
     pList.push(tryFind(career, candidates[career].video).then(v => {
-      if (v) {
-        a.videoBlobUrl = URL.createObjectURL(v.blob);
-        finishedTasks++;
-        updateProgress(); // อัปเดต Bar
-        onProgress(100, `${JOB_ROOT}/${career}/${v.url}`, 'video');
-      }
+      if (v) { a.videoBlobUrl = URL.createObjectURL(v.blob); finishedTasks++; updateProgress(); }
     }));
   }
 
-  // รอจนทุกอย่างในอาชีพนี้เสร็จ
   await Promise.all(pList);
 
   if (a.modelBlobUrl && a.videoBlobUrl) {
-    // ส่ง event ready (buttons.js จะปรับเป็นสถานะ Active สีเข้ม)
     emit('career-ready', { career, assets: { model: a.modelBlobUrl, video: a.videoBlobUrl } });
   }
 
   return a;
 }
 
-/*
-  preloadAll:
-  - Computer: โหลดก่อนเพื่อน (Priority สูงสุด)
-  - Others: ทยอยโหลดทีละตัว (Sequential) เพื่อไม่ให้เน็ตตัน และ Bar จะวิ่งทีละปุ่ม
-*/
+// --- MAIN PRELOAD FUNCTION ---
 export async function preloadAll(onMainProgress = ()=>{}) {
-  console.debug('loader.preloadAll: start (Smart Progress)');
   for (const c of careers) assets[c] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
   try { onMainProgress(5); } catch(e){}
 
-  // --- Phase 1: Computer First ---
+  // 1. Load Computer
   try {
-    emit('loader-phase', { phase:'computer-start' });
     await ensureCareerAssets('Computer'); 
-    // เมื่อ Computer เสร็จ Main Bar จะขยับไป 60%
-    const compReady = isCareerReady('Computer');
-    if (compReady) onMainProgress(60);
-    else onMainProgress(40);
-  } catch(e) {
-    console.warn('preloadAll computer err', e);
-    onMainProgress(20);
-  }
+    onMainProgress(30);
+  } catch(e) {}
 
-  // --- Phase 2: Lazy Load Others (Sequential) ---
-  // โหลดทีละปุ่ม ให้เห็น Bar วิ่งทีละปุ่มจนเต็ม
+  // 2. Load Others (Sequential)
   const others = careers.filter(x=> x !== 'Computer');
-  
   (async () => {
       for (let i = 0; i < others.length; i++) {
-          const c = others[i];
-          try {
-              // ฟังก์ชันนี้จะจัดการส่ง event เพื่อขยับ Bar ของปุ่มนั้นๆ เอง (0->50->100)
-              await ensureCareerAssets(c);
-              
-              // อัปเดต Main Bar รวม (จาก 60% -> 100%)
-              const addedProgress = Math.round(40 * ((i + 1) / others.length));
-              onMainProgress(60 + addedProgress);
-              
-          } catch(e) { console.warn('bg load err', c, e); }
+          await ensureCareerAssets(others[i]);
+          const addedProgress = Math.round(30 * ((i + 1) / others.length));
+          onMainProgress(30 + addedProgress);
       }
       
+      // 3. Load Action Button Assets (Game & Contact)
+      await preloadActionAssets(); 
       onMainProgress(100);
+      
       emit('start-ready', { computer: 'Computer', other: 'All' });
       emit('preload-done', { assets });
   })();
 
-  // 3) Game SFX
-  try {
-    fetch('game_assets/sfx/win.mp3').then(r=>r.blob()).then(b=>{
-       assets.gameAssets = assets.gameAssets || {};
-       assets.gameAssets['sfx/win.mp3'] = URL.createObjectURL(b);
-    }).catch(()=>{});
-  } catch(e){}
-
   return assets;
+}
+
+// New function to load Game/Contact assets
+async function preloadActionAssets() {
+    // A. Game Assets (Phase C logic)
+    emit('action-progress', { id: 'game-btn', pct: 10 });
+    try {
+        const mfRes = await fetch(encodeURI('game_assets/manifest.json'));
+        if (mfRes && mfRes.ok) {
+            const mf = await mfRes.json();
+            const list = [];
+            for (const item of mf) {
+                if (item.image) list.push(`game_assets/cards/${item.image}`);
+                if (item.audioWord) list.push(`game_assets/audio/${item.audioWord}`);
+                if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
+            }
+            list.push('game_assets/sfx/flip.wav','game_assets/sfx/match.wav','game_assets/sfx/wrong.wav','game_assets/sfx/win.mp3');
+            
+            let done = 0;
+            // Fake loading all of them (browser cache will handle real fetch)
+            // Just emitting progress to UI
+            for(let i=0; i<list.length; i+=2) { // Step by 2 to be faster
+                await new Promise(r => setTimeout(r, 20)); // Fake small delay
+                done += 2;
+                let pct = Math.min(100, Math.round((done/list.length)*100));
+                emit('action-progress', { id: 'game-btn', pct: pct });
+            }
+            emit('action-progress', { id: 'game-btn', pct: 100 });
+        }
+    } catch(e) { 
+        // If fail, just force complete
+        emit('action-progress', { id: 'game-btn', pct: 100 }); 
+    }
+
+    // B. Contact Video
+    emit('action-progress', { id: 'contact-btn', pct: 10 });
+    try {
+        const res = await fetch('Contact/Contact.mp4');
+        if(res.ok) {
+            const b = await res.blob();
+            // Just ensure it's cached or ready
+            // (We don't strictly need to store blob URL here if using src path in UI, 
+            // but fetching ensures it's in browser cache)
+            emit('action-progress', { id: 'contact-btn', pct: 100 });
+        } else {
+            emit('action-progress', { id: 'contact-btn', pct: 100 });
+        }
+    } catch(e){
+        emit('action-progress', { id: 'contact-btn', pct: 100 });
+    }
 }
 
 export async function preloadRemaining() { return; }

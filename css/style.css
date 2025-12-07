@@ -1,7 +1,8 @@
-/* css/style.css - Fix Camera Fullscreen + Thicker Scan */
+/* css/style.css - Action Buttons with Loading Bars (Green) */
 
 :root {
   --accent: #00ffff;
+  --green-ready: #00ff66; /* สีเขียวสำหรับปุ่มที่พร้อม */
 }
 
 html, body {
@@ -18,10 +19,10 @@ html, body {
   inset: 0;
   display: none;
   background: #000;
-  z-index: 0; /* ให้แน่ใจว่าอยู่หลัง UI */
+  z-index: 0;
 }
 
-/* --- FIX: บังคับวิดีโอ MindAR ให้เต็มจอทันที (แก้ปัญหากล้องเล็กมุมซ้าย) --- */
+/* FIX: Video Fullscreen */
 #container video {
   position: absolute !important;
   top: 0 !important;
@@ -29,10 +30,10 @@ html, body {
   width: 100% !important;
   height: 100% !important;
   object-fit: cover !important;
-  z-index: -1 !important; /* ดันไปหลังสุด */
+  z-index: -1 !important;
 }
 
-/* --- LOADING SCREEN --- */
+/* LOADING SCREEN */
 #loading-screen {
   position: fixed;
   inset: 0;
@@ -77,8 +78,7 @@ html, body {
   cursor: pointer;
 }
 
-/* --- SCAN FRAME --- */
-
+/* SCAN FRAME */
 #scan-frame {
   position: absolute;
   inset: 0;
@@ -95,7 +95,6 @@ html, body {
   position: relative;
 }
 
-/* มุม 4 ด้าน (หนา 7px) */
 .corner {
   position: absolute;
   width: 40px;
@@ -111,7 +110,6 @@ html, body {
 .bl { bottom: 0; left: 0; border-bottom-width: 7px; border-left-width: 7px; }
 .br { bottom: 0; right: 0; border-bottom-width: 7px; border-right-width: 7px; }
 
-/* --- เส้นสแกน (Animation) --- */
 .scan-line {
   position: absolute;
   width: 100%;
@@ -127,7 +125,6 @@ html, body {
   100% { top: 98%; }
 }
 
-/* Logic ซ่อนกรอบเมื่อมีคลาส no-scan */
 body.no-scan #scan-frame,
 body.no-scan #scan-frame *, 
 body.no-scan #scan-frame::before,
@@ -138,8 +135,7 @@ body.no-scan #scan-frame::after {
   pointer-events: none !important;
 }
 
-/* --- CAREER MENU & UI --- */
-
+/* MENU & BUTTONS */
 #career-menu {
   position: fixed;
   left: 50%;
@@ -187,7 +183,7 @@ body.no-scan #scan-frame::after {
   box-shadow: 0 6px 18px rgba(0, 188, 212, 0.08);
   transition: transform .12s;
   position: relative;
-  overflow: visible;
+  overflow: hidden; /* Important for bar */
 }
 
 .career-btn:active {
@@ -202,15 +198,35 @@ body.no-scan #scan-frame::after {
   margin-top: 8px;
 }
 
+/* Action Buttons (Game, Survey, Contact) */
 .action-btn {
   width: 100%;
-  padding: 10px;
+  padding: 12px;
   border-radius: 10px;
   border: none;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.1); /* สีพื้นหลังตอนยังไม่โหลด */
   color: #fff;
   font-weight: 700;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  filter: grayscale(100%) opacity(0.7); /* จางๆ ไว้ก่อน */
+  pointer-events: none; /* กดไม่ได้จนกว่าจะโหลดเสร็จ */
+}
+
+/* เมื่อโหลดเสร็จ (Ready) -> เปลี่ยนเป็นสีเขียว */
+.action-btn.action-ready {
+  background: linear-gradient(90deg, #00b09b, #96c93d); /* ไล่สีเขียวสวยๆ */
+  color: #000;
+  filter: none;
+  opacity: 1;
+  pointer-events: auto;
+  box-shadow: 0 4px 15px rgba(0, 255, 100, 0.3);
+}
+
+.action-btn:active {
+  transform: scale(0.98);
 }
 
 #return-row {
@@ -244,6 +260,26 @@ body.no-scan #scan-frame::after {
   cursor: pointer;
 }
 
-.career-btn .btn-bottom-bar { pointer-events: none; }
-.career-btn .btn-bottom-inner { width: 0%; height: 100%; border-radius: 8px; }
-.career-btn.career-ready { transition: box-shadow .2s, transform .14s; }
+/* --- LOADING BARS INSIDE BUTTONS --- */
+.career-btn .btn-bottom-bar,
+.action-btn .btn-bottom-bar {
+  pointer-events: none;
+  position: absolute;
+  left: 0; bottom: 0;
+  height: 4px;
+  width: 100%;
+  background: rgba(0,0,0,0.3);
+}
+
+.career-btn .btn-bottom-inner,
+.action-btn .btn-bottom-inner {
+  height: 100%;
+  width: 0%;
+  background: #fff; /* สีโหลด */
+  transition: width 0.3s ease;
+}
+
+.career-btn.career-ready .btn-bottom-inner,
+.action-btn.action-ready .btn-bottom-inner {
+  background: transparent; /* ซ่อนบาร์เมื่อเสร็จ */
+}
