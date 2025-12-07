@@ -1,5 +1,5 @@
 // /WEB/js/contact.js
-// จัดการหน้าติดต่อ (Video + Facebook)
+import * as AR from './ar.js'; // ✅ Import AR
 
 const FACEBOOK_URL = 'https://www.facebook.com/ComputerEngineering.rmutl';
 const CONTACT_VIDEO_PATH = 'Contact/Contact.mp4';
@@ -9,8 +9,15 @@ export function initContact() {
   if (!contactBtn) return;
 
   contactBtn.addEventListener('click', () => {
+    // ✅ 1. ลบคอนเทนต์ AR เดิมออกทันที
+    try { AR.resetToIdle(); } catch(e){}
+    AR.setNoScan(true);
+
+    // 2. ซ่อนเมนู
     const careerMenu = document.getElementById('career-menu');
     if (careerMenu) careerMenu.style.display = 'none';
+    const backBtn = document.getElementById('backBtn');
+    if (backBtn) backBtn.style.display = 'none';
 
     // Overlay พื้นหลัง
     const overlay = document.createElement('div');
@@ -27,7 +34,7 @@ export function initContact() {
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px'
     });
 
-    // 1. ส่วนวีดีโอ
+    // Video
     const videoContainer = document.createElement('div');
     videoContainer.innerHTML = `
       <div style="width: 100%; border-radius: 16px; overflow: hidden; border: 2px solid #00ffff; box-shadow: 0 0 20px rgba(0,255,255,0.4); background:#000;">
@@ -36,7 +43,7 @@ export function initContact() {
     `;
     contentContainer.appendChild(videoContainer);
 
-    // 2. ปุ่ม Facebook Logo
+    // Facebook Button
     const fbLink = document.createElement('a');
     fbLink.href = FACEBOOK_URL;
     fbLink.target = '_blank';
@@ -57,10 +64,9 @@ export function initContact() {
       </div>
     `;
     contentContainer.appendChild(fbLink);
-
     overlay.appendChild(contentContainer);
 
-    // ปุ่มปิด (X)
+    // Close Button
     const closeBtn = document.createElement('button');
     closeBtn.innerHTML = '✕';
     Object.assign(closeBtn.style, {
@@ -71,7 +77,9 @@ export function initContact() {
     });
     closeBtn.onclick = () => {
       overlay.remove();
+      // กลับสู่หน้า Menu
       if (careerMenu) careerMenu.style.display = 'flex';
+      AR.setNoScan(true);
     };
     overlay.appendChild(closeBtn);
 

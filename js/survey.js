@@ -1,5 +1,5 @@
 // /WEB/js/survey.js
-// จัดการแบบสอบถาม (Google Form)
+import * as AR from './ar.js'; // ✅ Import AR เพื่อสั่งลบคอนเทนต์
 
 const SURVEY_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfMrNoQ1fTfOyq5QtLWTc7sN2aTJFmGRKa6ldeGj4JApYYKfA/viewform?embedded=true';
 
@@ -8,7 +8,11 @@ export function initSurvey() {
   if (!surveyBtn) return;
 
   surveyBtn.addEventListener('click', () => {
-    // ซ่อน UI เดิม
+    // ✅ 1. ลบคอนเทนต์ AR เดิมออกทันที (ไม่ต้องพัก)
+    try { AR.resetToIdle(); } catch(e){}
+    AR.setNoScan(true); // ปิดการสแกนด้วย
+
+    // 2. ซ่อน UI เดิม (Menu, BackBtn, ScanFrame)
     const careerMenu = document.getElementById('career-menu');
     const backBtn = document.getElementById('backBtn');
     const scanFrame = document.getElementById('scan-frame');
@@ -17,7 +21,7 @@ export function initSurvey() {
     if (backBtn) backBtn.style.display = 'none';
     if (scanFrame) scanFrame.style.display = 'none';
 
-    // สร้าง Overlay แบบสอบถาม
+    // 3. สร้าง Overlay แบบสอบถาม
     const overlay = document.createElement('div');
     overlay.id = 'survey-overlay';
     Object.assign(overlay.style, {
@@ -40,15 +44,16 @@ export function initSurvey() {
 
     closeBtn.onclick = () => {
       overlay.remove();
-      // คืนค่า UI
+      // เมื่อปิดแล้ว ให้กลับมาหน้า Menu หลัก (Idle State)
       if (careerMenu) careerMenu.style.display = 'flex';
-      // scanFrame อาจจะให้ AR จัดการต่อ หรือเปิดกลับมาถ้าจำเป็น
+      // เปิดการสแกนใหม่เพื่อให้เริ่มเล่นใหม่ได้
+      AR.setNoScan(true); 
     };
 
     header.appendChild(closeBtn);
     overlay.appendChild(header);
 
-    // Iframe Google Form
+    // Iframe
     const iframe = document.createElement('iframe');
     iframe.src = SURVEY_URL;
     Object.assign(iframe.style, {
