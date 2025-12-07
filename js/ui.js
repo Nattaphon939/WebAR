@@ -1,6 +1,7 @@
 // /WEB/js/ui.js
 import * as AR from './ar.js';
 import { initButtons } from './buttons.js';
+import { CONFIG } from './config.js'; // <--- 1. นำเข้าไฟล์ตั้งค่า
 
 export function initUI(){
   // init career buttons with small bars and ready/disabled states
@@ -16,16 +17,15 @@ export function initUI(){
   // return to last
   const returnBtn = document.getElementById('return-btn');
   if (returnBtn) {
-    // hide by default; only show when user pressed back (AR.pauseAndShowMenu will reveal it)
     try { returnBtn.style.display = 'none'; } catch(e){}
     returnBtn.addEventListener('click', ()=> { AR.returnToLast(); });
   }
 
-  // game / survey / contact buttons same as before
   const gameBtn = document.getElementById('game-btn');
   const surveyBtn = document.getElementById('survey-btn');
   const contactBtn = document.getElementById('contact-btn');
 
+  // --- GAME BUTTON ---
   if (gameBtn) {
     gameBtn.addEventListener('click', async ()=> {
       try { AR.resetToIdle(); } catch(e){}
@@ -35,7 +35,7 @@ export function initUI(){
       const scanFrame = document.getElementById('scan-frame');
       if (scanFrame) scanFrame.style.display = 'none';
 
-      // load game overlay as your previous code (keeps same behavior)
+      // load game overlay
       try {
         const res = await fetch('game.html');
         if (!res.ok) throw new Error('game not found');
@@ -68,7 +68,7 @@ export function initUI(){
         s.type = 'module'; s.src = 'js/game.js?ts=' + Date.now(); s.setAttribute('data-game-module','1');
         document.body.appendChild(s);
 
-        // add close button handling (similar to your previous design)
+        // add close button
         const closeBtn = overlay.querySelector('#game-close-btn') || (() => {
           const b = document.createElement('button'); b.id='game-close-btn'; b.textContent='✕';
           Object.assign(b.style, { position:'fixed', left:'12px', top:'12px', zIndex:10010, padding:'8px 10px', borderRadius:'8px', border:'none', background:'rgba(0,0,0,0.6)', color:'#00ffff', cursor:'pointer', fontSize:'16px' });
@@ -90,20 +90,21 @@ export function initUI(){
           if (scr) scr.remove();
           document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
           try { AR.resetToIdle(); } catch(e){}
+          
+          // Show Menu Again
           if (careerMenu) careerMenu.style.display = 'flex';
           const careerActions = document.getElementById('career-actions');
           if (careerActions) careerActions.style.display = 'flex';
           if (backBtn) backBtn.style.display = 'none';
           const returnBtn2 = document.getElementById('return-btn');
           if (returnBtn2) returnBtn2.style.display = 'none';
-          AR.setNoScan(true);
+          
           const scanFrame2 = document.getElementById('scan-frame');
           if (scanFrame2) scanFrame2.style.display = 'none';
         });
 
       } catch(e){
         alert('ไม่สามารถโหลดเกมได้ — ตรวจสอบไฟล์ game.html');
-        const careerMenu = document.getElementById('career-menu');
         if (careerMenu) careerMenu.style.display = 'flex';
         const careerActions = document.getElementById('career-actions');
         if (careerActions) careerActions.style.display = 'flex';
@@ -112,13 +113,62 @@ export function initUI(){
     });
   }
 
-  if (surveyBtn) surveyBtn.addEventListener('click', ()=> {
-    const careerMenu = document.getElementById('career-menu');
-    if (careerMenu) careerMenu.style.display = 'none';
-    if (backBtn) backBtn.style.display = 'none';
-    window.open('https://forms.gle/', '_blank');
-  });
+  // --- SURVEY BUTTON ---
+  if (surveyBtn) {
+    surveyBtn.addEventListener('click', ()=> {
+      // ซ่อนเมนู
+      const careerMenu = document.getElementById('career-menu');
+      if (careerMenu) careerMenu.style.display = 'none';
+      if (backBtn) backBtn.style.display = 'none';
+      const scanFrame = document.getElementById('scan-frame');
+      if (scanFrame) scanFrame.style.display = 'none';
 
+      // สร้าง Overlay
+      const overlay = document.createElement('div');
+      overlay.id = 'survey-overlay';
+      Object.assign(overlay.style, {
+        position: 'fixed', inset: '0', zIndex: '10000',
+        background: '#fff', display: 'flex', flexDirection: 'column'
+      });
+
+      // ส่วนหัว (ปุ่มปิด)
+      const header = document.createElement('div');
+      Object.assign(header.style, {
+        display: 'flex', justifyContent: 'flex-end', padding: '10px', background: '#000'
+      });
+
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = '✕ ปิดแบบสอบถาม';
+      Object.assign(closeBtn.style, {
+        padding: '8px 16px', borderRadius: '8px', border: '1px solid #333',
+        background: '#1a1a1a', color: '#fff', cursor: 'pointer', fontWeight: 'bold'
+      });
+
+      closeBtn.onclick = () => {
+        overlay.remove();
+        // คืนค่าเมนูกลับมา
+        if (careerMenu) careerMenu.style.display = 'flex';
+      };
+
+      header.appendChild(closeBtn);
+      overlay.appendChild(header);
+
+      // สร้าง Iframe
+      const iframe = document.createElement('iframe');
+      
+      // --- 2. ใช้ลิงก์จากไฟล์ config แทน ---
+      iframe.src = CONFIG.SURVEY_URL; 
+      
+      Object.assign(iframe.style, {
+        flex: '1', border: 'none', width: '100%', background: '#fff'
+      });
+
+      overlay.appendChild(iframe);
+      document.body.appendChild(overlay);
+    });
+  }
+
+  // --- CONTACT BUTTON ---
   if (contactBtn) contactBtn.addEventListener('click', ()=> {
     const careerMenu = document.getElementById('career-menu');
     if (careerMenu) careerMenu.style.display = 'none';
