@@ -1,28 +1,23 @@
-// /WEB/js/ar.js (Updated: Bigger Model Scale 0.7)
+// /WEB/js/ar.js (Refactored: Removed duplicates, using shared loader)
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { ensureCareerAssets, getAssets as getLoaderAssets } from './loader.js';
 
-const JOB_ROOT = './Job';
-const careers = ['Computer','AI','Cloud','Data_Center','Network'];
-const candidates = {
-  Computer: { model: ['Computer-Model.glb','computer-model.glb','Computer-model.glb'], video: ['Computer.mp4','computer.mp4','Computer-Video.mp4'] },
-  AI:       { model: ['ai-model.glb','AI-model.glb','ai-model.GLTF','AI-Model.glb'], video: ['AI.mp4','ai.mp4','ai-video.mp4'] },
-  Cloud:    { model: ['cloud-model.glb','Cloud-model.glb','cloud-model.GLTF'], video: ['video-cloud.mp4','cloud.mp4','cloud-video.mp4'] },
-  Data_Center: { model: ['Data_Center-model.glb','Data_Center-model.glb','Data_ Center-model.glb','Data_Center-model.GLTF'], video: ['Data_Center-Video.mp4','data_center.mp4','data-center.mp4'] },
-  Network:  { model: ['network-model.glb','Network-model.glb','network-model.GLTF'], video: ['video-network.mp4','network.mp4','network-video.mp4'] },
-};
+// ✅ IMPORT: ดึงตัวแปรและฟังก์ชันจาก loader.js แทนการประกาศซ้ำ
+import { ensureCareerAssets, getAssets, JOB_ROOT, careers } from './loader.js';
 
-const assets = getLoaderAssets();
+// เรียกใช้ assets จาก loader
+const assets = getAssets();
 const gameAssets = assets.gameAssets = assets.gameAssets || {};
 
+// --- DOM References ---
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
 const careerActions = () => document.getElementById('career-actions');
 const backBtn = () => document.getElementById('backBtn');
 
+// --- Global Variables ---
 let mindarThree, renderer, scene, camera;
 let anchor;
 let contentGroup = null; 
@@ -125,25 +120,7 @@ function ensureDracoInitialized() {
   return dracoLoaderInstance;
 }
 
-const tmpObj = new THREE.Object3D();
-const tmpQuat = new THREE.Quaternion();
-const parentWorldQuat = new THREE.Quaternion();
-const targetLocalQuat = new THREE.Quaternion();
-const SMOOTH_FACTOR = 0.12;
-
-async function fetchFirstAvailable(career, list) {
-  for (const name of list) {
-    const url = `${JOB_ROOT}/${career}/${name}`;
-    try {
-      const res = await fetch(encodeURI(url));
-      if (!res.ok) continue;
-      const b = await res.blob();
-      if (!b || b.size === 0) continue;
-      return URL.createObjectURL(b);
-    } catch(e){}
-  }
-  return null;
-}
+// ✅ REMOVED: fetchFirstAvailable (ใช้ ensureCareerAssets ของ loader แทน)
 
 function loadGLTF(blobUrl) {
   return new Promise((resolve) => {
@@ -331,7 +308,7 @@ function attachContentToAnchor(gltf, video) {
     gltfModel = sceneObj;
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
-    // *** UPDATED SCALE HERE (0.7) ***
+    // *** SCALE 0.7 ***
     gltfModel.scale.set(0.7, 0.7, 0.7);
     gltfModel.position.set(-0.25, -0.45, 0.05);
     gltfModel.visible = false;
@@ -397,7 +374,6 @@ function attachContentToAnchor(gltf, video) {
 
         if (gltfModel) {
             gltfModel.visible = true;
-            // *** UPDATED SCALE HERE AS WELL (0.7) ***
             gltfModel.scale.set(0.7, 0.7, 0.7);
             gltfModel.rotation.set(0, 0, 0);
             gltfModel.quaternion.set(0, 0, 0, 1);
@@ -434,141 +410,14 @@ function attachContentToAnchor(gltf, video) {
   }
 }
 
-export async function preloadCritical(onProgress = ()=>{}) {
-  try { onProgress({ phase:'phaseA-start', pct:0 }); } catch(e){}
-  try {
-    await ensureCareerAssets('Computer', (pct, file, type) => {
-      try { onProgress({ phase:'phaseA-career', career:'Computer', pct, file, type, startReady:false }); } catch(e){}
-    });
-  } catch(e) { try { onProgress({ phase:'phaseA-error', pct: 10 }); } catch(e){} }
-
-  const order = [...careers].filter(c => c !== 'Computer');
-  for (let ci=0; ci<order.length; ci++) {
-    const career = order[ci];
-    try {
-      await ensureCareerAssets(career, (pct, file, type) => {
-        const doneCareers = ci + (pct/100);
-        const overall = Math.round((doneCareers / order.length) * 100);
-        try { onProgress({ phase:'phaseB-career', career, pct, file, type, overall }); } catch(e){}
-      });
-    } catch(e) { try { onProgress({ phase:'phaseB-career-error', career, pct:100 }); } catch(e){} }
-    try {
-      const compReady = isCareerReady('Computer');
-      const readyCount = careers.reduce((acc,c)=> acc + (isCareerReady(c) ? 1 : 0), 0);
-      const startOk = compReady && readyCount >= 2;
-      onProgress({ phase:'check-start', startReady: startOk, pct: 0 });
-    } catch(e){}
-  }
-
-  try {
-    onProgress({ phase:'phaseC-start', pct:0 });
-    const mfRes = await fetch(encodeURI('game_assets/manifest.json'));
-    if (mfRes && mfRes.ok) {
-      const mf = await mfRes.json();
-      const list = [];
-      for (const item of mf) {
-        if (item.image) list.push(`game_assets/cards/${item.image}`);
-        if (item.audioWord) list.push(`game_assets/audio/${item.audioWord}`);
-        if (item.audioMeaning) list.push(`game_assets/audio/${item.audioMeaning}`);
-      }
-      list.push('game_assets/sfx/flip.wav','game_assets/sfx/match.wav','game_assets/sfx/wrong.wav','game_assets/sfx/win.mp3');
-      let done = 0;
-      await Promise.all(list.map(async u => {
-        try {
-          const r = await fetch(encodeURI(u));
-          if (!r.ok) { done++; onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) }); return; }
-          const b = await r.blob();
-          gameAssets[u.replace('game_assets/','')] = URL.createObjectURL(b);
-          done++;
-          onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) });
-        } catch(e) { done++; onProgress({ phase:'phaseC', pct: Math.round((done/list.length)*100) }); }
-      }));
-    } else {
-      onProgress({ phase:'phaseC', pct: 50 });
-    }
-  } catch(e) { onProgress({ phase:'phaseC-error', pct: 50 }); }
-
-  assets.gameAssets = gameAssets;
-  onProgress({ phase:'critical-done', pct: 100, startReady: (isCareerReady('Computer') && careers.some(c=> c !== 'Computer' && isCareerReady(c))) });
-  return assets;
-}
-
-export function isCareerReady(career) {
-  const a = assets[career] || {};
-  return !!(a && a.modelBlobUrl && a.videoBlobUrl);
-}
-
-export async function preloadRemaining() {
-  const urls = [];
-  for (const career of careers) {
-    if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-    const a = assets[career];
-    if (!a.modelBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].model[0]}`);
-    if (!a.videoBlobUrl) urls.push(`${JOB_ROOT}/${career}/${candidates[career].video[0]}`);
-  }
-  try {
-    const mf = await fetch('game_assets/manifest.json');
-    if (mf && mf.ok) {
-      const manifest = await mf.json();
-      for (const item of manifest) {
-        if (item.image) urls.push(`game_assets/cards/${item.image}`);
-        if (item.audioWord) urls.push(`game_assets/audio/${item.audioWord}`);
-        if (item.audioMeaning) urls.push(`game_assets/audio/${item.audioMeaning}`);
-      }
-    }
-  } catch(e){}
-  const sfx = ['flip.wav','match.wav','wrong.wav','win.mp3'];
-  for (const f of sfx) urls.push(`game_assets/sfx/${f}`);
-  const final = Array.from(new Set(urls));
-  await Promise.all(final.map(async u => {
-    try {
-      const r = await fetch(encodeURI(u));
-      if (!r.ok) return;
-      const blob = await r.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      if (u.startsWith(`${JOB_ROOT}/`)) {
-        const parts = u.split('/');
-        const career = parts[2];
-        const low = u.toLowerCase();
-        if (low.endsWith('.glb') || low.endsWith('.gltf')) {
-          assets[career].modelBlobUrl = assets[career].modelBlobUrl || blobUrl;
-          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'model' } }));
-        } else {
-          assets[career].videoBlobUrl = assets[career].videoBlobUrl || blobUrl;
-          document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career: career, pct: 100, file: u, type: 'video' } }));
-        }
-      } else if (u.startsWith('game_assets/')) {
-        gameAssets[u.replace('game_assets/','')] = blobUrl;
-      }
-    } catch(e){}
-  }));
-  return;
-}
+// ✅ REMOVED: preloadCritical, preloadRemaining, isCareerReady (ฟังก์ชันเหล่านี้มีใน loader.js แล้ว)
 
 async function ensureContentForCareer(career) {
   if (!career) return;
-  if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-  const a = assets[career];
+  // ✅ UPDATE: เรียกใช้ ensureCareerAssets จาก loader โดยตรง แทนการเขียน logic ซ้ำ
+  await ensureCareerAssets(career);
 
-  if (!a.modelBlobUrl) {
-    try {
-      const fb = await fetchFirstAvailable(career, candidates[career].model);
-      if (fb) {
-        a.modelBlobUrl = fb;
-        document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: 'fallback-model', type: 'model' } }));
-      }
-    } catch(e){}
-  }
-
-  if (!a.videoBlobUrl) {
-    try {
-      const fv = await fetchFirstAvailable(career, candidates[career].video);
-      if (fv) {
-        a.videoBlobUrl = fv;
-        document.dispatchEvent(new CustomEvent('career-load-progress', { detail: { career, pct: 100, file: 'fallback-video', type: 'video' } }));
-      }
-    } catch(e){}
-  }
+  const a = assets[career] || {};
 
   if (!gltfModel && a.modelBlobUrl) {
     const g = await loadGLTF(a.modelBlobUrl);
@@ -605,6 +454,7 @@ function createLights(scene) {
 }
 
 export async function initAndStart(containerElement) {
+  // ✅ UPDATE: ใช้ assets จาก loader ที่ import มา
   const markerSrc = (assets['Computer'] && assets['Computer'].markerBlobUrl) ? assets['Computer'].markerBlobUrl : `${JOB_ROOT}/Computer/marker.mind`;
   mindarThree = new MindARThree({
     container: containerElement,
@@ -785,74 +635,68 @@ export async function initAndStart(containerElement) {
         const target = new THREE.Vector3(camPos.x, worldPos.y, camPos.z);
         contentGroup.lookAt(target);
     }
-
-    try {
-      if (anchor && anchor.group && camera) {
-        // ...
-      }
-    } catch(e){}
     renderer.render(scene, camera);
   });
 }
 
 function hideScanFrameThen(callback) {
-  const sf = scanFrame();
-  if (!sf) { if (callback) callback(); return; }
-  if (noScanMode) {
-    sf.style.display = 'none';
-    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    if (callback) callback();
-    return;
-  }
-  const cm = careerMenu();
-  try {
-    const cmStyle = cm ? window.getComputedStyle(cm) : null;
-    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '0') {
-      sf.style.display = 'none';
-      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-      if (callback) callback();
-      return;
-    }
-  } catch(e){}
-  const curDisplay = window.getComputedStyle(sf).display;
-  if (curDisplay === 'none' || sf.style.display === 'none') { if (callback) callback(); return; }
-  sf.style.transition = 'opacity 200ms ease';
-  sf.style.opacity = '1';
-  sf.offsetHeight;
-  sf.style.opacity = '0';
-  setTimeout(()=> {
-    try {
-      sf.style.display = 'none';
-      sf.style.transition = '';
-      sf.style.opacity = '1';
-      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
-    } catch(e){}
-    if (callback) callback();
-  }, 220);
+  const sf = scanFrame();
+  if (!sf) { if (callback) callback(); return; }
+  if (noScanMode) {
+    sf.style.display = 'none';
+    Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    if (callback) callback();
+    return;
+  }
+  const cm = careerMenu();
+  try {
+    const cmStyle = cm ? window.getComputedStyle(cm) : null;
+    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '0') {
+      sf.style.display = 'none';
+      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+      if (callback) callback();
+      return;
+    }
+  } catch(e){}
+  const curDisplay = window.getComputedStyle(sf).display;
+  if (curDisplay === 'none' || sf.style.display === 'none') { if (callback) callback(); return; }
+  sf.style.transition = 'opacity 200ms ease';
+  sf.style.opacity = '1';
+  sf.offsetHeight;
+  sf.style.opacity = '0';
+  setTimeout(()=> {
+    try {
+      sf.style.display = 'none';
+      sf.style.transition = '';
+      sf.style.opacity = '1';
+      Array.from(sf.querySelectorAll('*')).forEach(n=> n.style.display = 'none');
+    } catch(e){}
+    if (callback) callback();
+  }, 220);
 }
 
 export async function playCareer(career) {
-  if (backBtn()) backBtn().style.display = 'inline-block';
-  if (careerMenu()) careerMenu().style.display = 'none';
-  if (career !== 'Computer') {
-    if (careerActions()) careerActions().style.display = 'flex';
-  } else {
-    if (careerActions()) careerActions().style.display = 'none';
-  }
+  if (backBtn()) backBtn().style.display = 'inline-block';
+  if (careerMenu()) careerMenu().style.display = 'none';
+  if (career !== 'Computer') {
+    if (careerActions()) careerActions().style.display = 'flex';
+  } else {
+    if (careerActions()) careerActions().style.display = 'none';
+  }
 
-  setAutoPlayEnabled(true);
-  setNoScan(false);
+  setAutoPlayEnabled(true);
+  setNoScan(false);
 
   if (isAnchorTracked) {
     const sf = scanFrame();
     if(sf) sf.style.display = 'none';
   }
 
-  if (playingCareer === career) {
+  if (playingCareer === career) {
     console.log('Resuming career:', career);
-    isPausedByBack = false;
-    if (isAnchorTracked) {
-       ensureAttachedAndVisible();
+    isPausedByBack = false;
+    if (isAnchorTracked) {
+       ensureAttachedAndVisible();
         if(videoElem) preSyncPose(videoElem.currentTime);
         try { renderer && renderer.render && renderer.render(scene, camera); } catch(e){}
 
@@ -868,57 +712,57 @@ export async function playCareer(career) {
                if (mixer) mixer.timeScale = 1;
            }
         }, 500);
-    } else {
-       waitingForMarkerPlay = true;
-    }
-    return;
-  }
+    } else {
+       waitingForMarkerPlay = true;
+    }
+    return;
+  }
 
-  if (playingCareer && playingCareer !== career) {
-    clearAnchorContent(false);
-    playingCareer = null;
-    isPausedByBack = false;
-    waitingForMarkerPlay = false;
-    pausedByTrackingLoss = false;
-  }
+  if (playingCareer && playingCareer !== career) {
+    clearAnchorContent(false);
+    playingCareer = null;
+    isPausedByBack = false;
+    waitingForMarkerPlay = false;
+    pausedByTrackingLoss = false;
+  }
 
-  if (!assets[career]) assets[career] = { modelBlobUrl: null, videoBlobUrl: null };
-  try { await ensureCareerAssets(career, ()=>{}); } catch(e){}
-  try { await ensureContentForCareer(career); } catch(e){}
+  // ✅ UPDATE: ใช้ ensureCareerAssets จาก loader
+  await ensureCareerAssets(career, ()=>{});
+  try { await ensureContentForCareer(career); } catch(e){}
 
-  const a = assets[career] || {};
-  if (gltfModel && gltfModel.userData && gltfModel.userData.sourceCareer !== career) {
-    clearAnchorContent(false);
-  }
+  const a = assets[career] || {};
+  if (gltfModel && gltfModel.userData && gltfModel.userData.sourceCareer !== career) {
+    clearAnchorContent(false);
+  }
 
-  if (!gltfModel && a.modelBlobUrl) {
-    try {
-      const g = await loadGLTF(a.modelBlobUrl);
-      attachContentToAnchor(g, null);
-    } catch(e){ console.warn('playCareer attach gltf err', e); }
-  }
+  if (!gltfModel && a.modelBlobUrl) {
+    try {
+      const g = await loadGLTF(a.modelBlobUrl);
+      attachContentToAnchor(g, null);
+    } catch(e){ console.warn('playCareer attach gltf err', e); }
+  }
 
-  if (!videoElem && a.videoBlobUrl) {
-    try {
-      const v = makeVideoElem(a.videoBlobUrl);
-      attachContentToAnchor(gltfModel ? { scene: gltfModel } : null, v);
-    } catch(e){ console.warn('playCareer attach video err', e); }
-  }
+  if (!videoElem && a.videoBlobUrl) {
+    try {
+      const v = makeVideoElem(a.videoBlobUrl);
+      attachContentToAnchor(gltfModel ? { scene: gltfModel } : null, v);
+    } catch(e){ console.warn('playCareer attach video err', e); }
+  }
 
-  playingCareer = career;
-  lastCareer = career;
-  isPausedByBack = false;
+  playingCareer = career;
+  lastCareer = career;
+  isPausedByBack = false;
 
-  if (isAnchorTracked && autoPlayEnabled) {
-    try { ensureAttachedAndVisible(); } catch(e){}
-    try { if (gltfModel) gltfModel.visible = true; } catch(e){}
-    try { if (videoMesh) videoMesh.visible = true; } catch(e){}
-    await new Promise(r => requestAnimationFrame(r));
-    await new Promise(r => requestAnimationFrame(r));
+  if (isAnchorTracked && autoPlayEnabled) {
+    try { ensureAttachedAndVisible(); } catch(e){}
+    try { if (gltfModel) gltfModel.visible = true; } catch(e){}
+    try { if (videoMesh) videoMesh.visible = true; } catch(e){}
+    await new Promise(r => requestAnimationFrame(r));
+    await new Promise(r => requestAnimationFrame(r));
 
-    if (videoElem && videoElem.videoWidth) {
-       try { videoElem.dispatchEvent(new Event('loadedmetadata')); } catch(e){}
-    }
+    if (videoElem && videoElem.videoWidth) {
+       try { videoElem.dispatchEvent(new Event('loadedmetadata')); } catch(e){}
+    }
 
     if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
     preSyncPose(0);
@@ -944,59 +788,57 @@ export async function playCareer(career) {
         }
     }, 500);
 
-    waitingForMarkerPlay = false;
-  } else {
-    if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
-    waitingForMarkerPlay = true;
-  }
+    waitingForMarkerPlay = false;
+  } else {
+    if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
+    waitingForMarkerPlay = true;
+  }
 }
 
 export function pauseAndShowMenu() {
-  if (videoElem) try { 
+  if (videoElem) try { 
     videoElem.pause();
     videoElem.currentTime = Math.max(0, videoElem.currentTime - 0.4);
   } catch(e){}
-  if (mixer) try { mixer.timeScale = 0; } catch(e){}
-  isPausedByBack = true;
-  setAutoPlayEnabled(false);
-  if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
-  if (careerMenu()) careerMenu().style.display = 'flex';
-  if (backBtn()) backBtn().style.display = 'none';
-  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'inline-block'; } catch(e){}
-  setNoScan(true);
-  waitingForMarkerPlay = false;
-  pausedByTrackingLoss = false;
+  if (mixer) try { mixer.timeScale = 0; } catch(e){}
+  isPausedByBack = true;
+  setAutoPlayEnabled(false);
+  if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
+  if (careerMenu()) careerMenu().style.display = 'flex';
+  if (backBtn()) backBtn().style.display = 'none';
+  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'inline-block'; } catch(e){}
+  setNoScan(true);
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
 }
 
 export function returnToLast() {
-  if (!lastCareer) return;
-  playCareer(lastCareer);
+  if (!lastCareer) return;
+  playCareer(lastCareer);
 }
 
 export function removeCurrentAndShowMenu() {
-  clearAnchorContent(false);
-  playingCareer = null;
-  isPausedByBack = false;
-  setAutoPlayEnabled(true);
-  if (careerActions()) careerActions().style.display = 'none';
-  if (careerMenu()) careerMenu().style.display = 'flex';
-  if (backBtn()) backBtn().style.display = 'none';
-  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
-  setNoScan(true);
-  waitingForMarkerPlay = false;
-  pausedByTrackingLoss = false;
+  clearAnchorContent(false);
+  playingCareer = null;
+  isPausedByBack = false;
+  setAutoPlayEnabled(true);
+  if (careerActions()) careerActions().style.display = 'none';
+  if (careerMenu()) careerMenu().style.display = 'flex';
+  if (backBtn()) backBtn().style.display = 'none';
+  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
+  setNoScan(true);
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
 }
 
 export function resetToIdle() {
-  try { clearAnchorContent(false); } catch(e){}
-  playingCareer = null;
-  lastCareer = null;
-  isPausedByBack = false;
-  waitingForMarkerPlay = false;
-  pausedByTrackingLoss = false;
-  setAutoPlayEnabled(false);
-  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
-  setNoScan(true);
+  try { clearAnchorContent(false); } catch(e){}
+  playingCareer = null;
+  lastCareer = null;
+  isPausedByBack = false;
+  waitingForMarkerPlay = false;
+  pausedByTrackingLoss = false;
+  setAutoPlayEnabled(false);
+  try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
+  setNoScan(true);
 }
-
-export function getAssets() { return assets; }
