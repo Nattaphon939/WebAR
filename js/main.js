@@ -1,4 +1,4 @@
-// /WEB/js/main.js  (replace)
+// /WEB/js/main.js
 console.debug('main.js loaded');
 import { preloadAll, preloadRemaining } from './loader.js';
 import { initUI } from './ui.js';
@@ -21,89 +21,94 @@ function setMainProgress(pct) {
 
 async function main(){
   setMainProgress(0);
-  // initialize UI (career buttons) early so they can show per-career progress
+  
+  // เตรียม UI (แต่ยังไม่แสดงผล)
   try { initUI(); } catch(e) { console.warn('initUI early failed', e); }
 
-  // ensure Start button is visible during loading (disabled until Computer ready)
+  // 1. บังคับซ่อนปุ่ม Start ไว้ก่อนเสมอ
   if (startButton) {
-    startButton.style.display = 'inline-block';
+    startButton.style.display = 'none';
     startButton.disabled = true;
-    startButton.textContent = 'กำลังเตรียม AR... 0%';
   }
 
-  // listen for loader events
-  // Use Computer career progress to drive the main loading bar
+  // Listener: อัปเดต Progress Bar (ใช้ของ Computer เป็นหลัก)
   document.addEventListener('career-load-progress', (ev) => {
     try {
       const d = ev.detail || {};
       if (d.career === 'Computer') {
-        // map career pct (marker/model/video emissions) directly to main bar
         const pct = d.pct || 0;
         setMainProgress(pct);
         if (pct >= 95) loadingText.textContent = 'เตรียมคอนเท้นด้าน AR เสร็จแล้ว';
-        // update start button label to reflect progress while disabled
-        if (startButton) {
-          if (pct >= 100) startButton.textContent = 'กำลังเตรียมเสร็จ...';
-          else startButton.textContent = `กำลังเตรียม AR (Computer): ${pct}%`;
-        }
       }
     } catch(e){}
   });
 
-  // show Start only when Computer is fully ready (career-ready)
+  // Listener: เมื่อ Computer พร้อม -> แสดงปุ่ม Start
   document.addEventListener('career-ready', (ev) => {
     try {
       const d = ev.detail || {};
       console.debug('main: career-ready', d);
       if (d.career === 'Computer') {
         if (startButton) {
-          startButton.style.display = 'inline-block';
+          startButton.style.display = 'inline-block'; // โชว์ปุ่ม
           startButton.disabled = false;
           startButton.textContent = 'แตะเพื่อเริ่ม AR';
+          
+          // บังคับหลอดโหลดเต็ม
           setMainProgress(100);
           loadingText.textContent = 'พร้อมเริ่มต้น — แตะเพื่อเริ่ม';
         }
-        // start background Phase B via loader.preloadRemaining
-        try { preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
+        // เริ่มโหลด Phase B (อาชีพอื่น) ต่อใน Background
+        try { preloadRemaining().catch(e=>console.warn(e)); } catch(e){}
       }
     } catch(e){}
   });
 
-  // main preload (will emit 'career-load-progress' and 'start-ready' events)
+  // เริ่มกระบวนการ Preload
   console.debug('main: calling preloadAll');
-  // race preload with a timeout so UI doesn't hang if network requests stall
-  const timeoutMs = 8000;
+  const timeoutMs = 8000; // 8 วินาที
+  
   const preloadPromise = preloadAll((pct) => {
-    console.debug('main: preloadAll progress', pct);
+    // Callback นี้ทำงานเมื่อ loader.js อัปเดตภาพรวม
     setMainProgress(pct);
-    if (pct >= 100) {
-      loadingText.textContent = 'โหลดทรัพยากรเสร็จแล้ว';
-    }
   });
+  
+  // Race กับ Timeout เพื่อแจ้งเตือนหากเน็ตช้า
   const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), timeoutMs));
-  const res = await Promise.race([preloadPromise, timeoutPromise]).catch(e => { console.error('preloadAll rejected', e); return { error: e }; });
-  console.debug('main: preloadAll returned', res);
+  
+  const res = await Promise.race([preloadPromise, timeoutPromise]).catch(e => { 
+    console.error('preloadAll rejected', e); 
+    return { error: e }; 
+  });
 
-  // If preload timed out, show start button and continue background loading
+  // กรณีโหลดนานเกินกำหนด (Timeout)
   if (res && res.timedOut) {
-    console.warn('preloadAll timed out — continuing background load; Start will appear when Computer ready');
-    setMainProgress(30);
-    loadingText.textContent = 'เครือข่ายช้า — กำลังเตรียมคอนเท้น กรุณารอสักครู่';
-    try { preloadRemaining().then(()=>console.log('Phase B background load finished')).catch(e=>console.warn(e)); } catch(e){}
+    console.warn('preloadAll timed out');
+    // ปรับ Progress Bar หลอกๆ ให้ผู้ใช้รู้ว่ายังทำงานอยู่
+    if (lastMainPct < 30) setMainProgress(30);
+    
+    // เปลี่ยนข้อความแจ้งเตือน
+    loadingText.textContent = 'เครือข่ายล่าช้า กรุณารอสักครู่';
+    
+    // พยายามโหลดต่อใน Background (ถ้า Computer เสร็จเมื่อไหร่ ปุ่มจะเด้งเองจาก Event Listener ด้านบน)
+    try { preloadRemaining().catch(e=>console.warn(e)); } catch(e){}
   }
 
-  // when user clicks start: request camera, init AR, then wire UI
+  // Logic เมื่อกดปุ่ม Start
   if (!startButton) return;
   startButton.addEventListener('click', async () => {
+    // ขอ Permission กล้อง
     try { await navigator.mediaDevices.getUserMedia({ video:true }); } catch(e){ console.warn('camera permission', e); }
+    
+    // ซ่อนหน้าโหลด เปิดหน้า AR
     loadingScreen.style.display = 'none';
     container.style.display = 'block';
     if (scanFrame) scanFrame.style.display = 'flex';
 
-    // init AR + UI
+    // เริ่มระบบ AR
     try {
       await AR.initAndStart(container);
-      initUI();
+      initUI(); // Re-init UI เพื่อความชัวร์
     } catch(e){ console.error('initAndStart err', e); alert('ไม่สามารถเริ่ม AR ได้'); }
   }, { once: true });
 }
