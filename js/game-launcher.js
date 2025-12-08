@@ -6,7 +6,7 @@ export function initGameLauncher() {
   if (!gameBtn) return;
 
   gameBtn.addEventListener('click', async () => {
-    // เตรียม AR
+    // เตรียม AR (ล้างค่าเดิมและปิดการสแกน)
     try { AR.resetToIdle(); } catch(e){}
     AR.setNoScan(true);
 
@@ -15,6 +15,8 @@ export function initGameLauncher() {
     if (careerMenu) careerMenu.style.display = 'none';
     const scanFrame = document.getElementById('scan-frame');
     if (scanFrame) scanFrame.style.display = 'none';
+    const backBtn = document.getElementById('backBtn');
+    if (backBtn) backBtn.style.display = 'none';
 
     try {
       // โหลดไฟล์ game.html
@@ -24,11 +26,12 @@ export function initGameLauncher() {
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlText, 'text/html');
       
-      // สร้าง Overlay
+      // สร้าง Overlay สำหรับเกม
       const overlayId = 'game-overlay';
       let overlay = document.getElementById(overlayId);
       if (!overlay) {
-        overlay = document.createElement('div'); overlay.id = overlayId;
+        overlay = document.createElement('div'); 
+        overlay.id = overlayId;
         Object.assign(overlay.style, {
           position: 'fixed', inset: '0', zIndex: '9999',
           display: 'flex', alignItems: 'stretch', justifyContent: 'stretch'
@@ -54,21 +57,27 @@ export function initGameLauncher() {
       s.type = 'module'; s.src = 'js/game.js?ts=' + Date.now(); s.setAttribute('data-game-module','1');
       document.body.appendChild(s);
 
-      // สร้างปุ่มปิด (Close Button) ถ้ายังไม่มีใน HTML
+      // สร้างปุ่มปิด (Close Button)
       const closeBtn = overlay.querySelector('#game-close-btn') || (() => {
-        const b = document.createElement('button'); b.id='game-close-btn'; b.textContent='✕';
+        const b = document.createElement('button'); 
+        b.id = 'game-close-btn'; 
+        b.textContent = '✕';
         Object.assign(b.style, { 
-            position:'fixed', left:'12px', top:'12px', zIndex:10010, 
-            padding:'8px 10px', borderRadius:'8px', border:'none', 
-            background:'rgba(0,0,0,0.6)', color:'#00ffff', cursor:'pointer', fontSize:'16px' 
+            position: 'fixed', left: '12px', top: '12px', zIndex: 10010, 
+            padding: '8px 10px', borderRadius: '8px', border: 'none', 
+            background: 'rgba(0,0,0,0.6)', color: '#00ffff', cursor: 'pointer', fontSize: '16px' 
         });
-        document.body.appendChild(b);
+        
+        // ✅ แก้ไขตรงนี้: ใส่ปุ่มลงใน overlay (ไม่ใช่ document.body)
+        // เพื่อให้ตอนลบ overlay ปุ่มจะหายไปด้วย
+        overlay.appendChild(b);
+        
         return b;
       })();
 
       // Logic ปุ่มปิดเกม
-      closeBtn.addEventListener('click', ()=> {
-        // หยุดกล้อง/วิดีโอในเกม
+      closeBtn.onclick = () => {
+        // หยุดกล้อง/วิดีโอในเกม (ถ้ามี)
         try {
           const vid = overlay.querySelector('video');
           if (vid && vid.srcObject) {
@@ -84,24 +93,27 @@ export function initGameLauncher() {
         if (scr) scr.remove();
         document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
         
-        // รีเซ็ต AR และ UI
+        // รีเซ็ต AR และ UI กลับสู่หน้าเมนู
         try { AR.resetToIdle(); } catch(e){}
         
         if (careerMenu) careerMenu.style.display = 'flex';
         const careerActions = document.getElementById('career-actions');
         if (careerActions) careerActions.style.display = 'flex';
         
-        const backBtn = document.getElementById('backBtn');
+        // ซ่อนปุ่มย้อนกลับต่างๆ เพราะเรากลับมาหน้าเมนูแล้ว
         if (backBtn) backBtn.style.display = 'none';
         const returnBtn = document.getElementById('return-btn');
         if (returnBtn) returnBtn.style.display = 'none';
         
         const scanFrame2 = document.getElementById('scan-frame');
         if (scanFrame2) scanFrame2.style.display = 'none';
-      });
+      };
 
     } catch(e){
+      console.warn(e);
       alert('ไม่สามารถโหลดเกมได้ — ตรวจสอบไฟล์ game.html');
+      
+      // กรณี Error ให้กู้คืนหน้าเมนู
       if (careerMenu) careerMenu.style.display = 'flex';
       const careerActions = document.getElementById('career-actions');
       if (careerActions) careerActions.style.display = 'flex';
