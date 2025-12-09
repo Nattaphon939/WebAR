@@ -1,8 +1,10 @@
 // /WEB/js/main.js
+// Final Robust Version: Explicit Camera Check & Detailed Error Reporting
+
 console.debug('main.js loaded');
 import { preloadAll, preloadRemaining } from './loader.js';
 import { initUI } from './ui.js';
-import * as AR from './ar.js'; //
+import * as AR from './ar.js';
 
 const bar = document.getElementById('bar');
 const loadingText = document.getElementById('loading-text');
@@ -21,39 +23,31 @@ function setMainProgress(pct) {
 
 async function main(){
   setMainProgress(0);
-  
-  // เตรียม UI (แต่ยังไม่แสดงผล)
   try { initUI(); } catch(e) { console.warn('initUI early failed', e); }
 
-  // 1. บังคับซ่อนปุ่ม Start ไว้ก่อนเสมอ
   if (startButton) {
     startButton.style.display = 'none';
     startButton.disabled = true;
   }
 
-  // Listener: อัปเดต Progress Bar
   document.addEventListener('career-load-progress', (ev) => {
     try {
       const d = ev.detail || {};
       if (d.career === 'Computer') {
-        const pct = d.pct || 0;
-        setMainProgress(pct);
-        if (pct >= 95) loadingText.textContent = 'เตรียมคอนเท้นด้าน AR เสร็จแล้ว';
+        setMainProgress(d.pct || 0);
+        if ((d.pct || 0) >= 95) loadingText.textContent = 'เตรียมคอนเท้นด้าน AR เสร็จแล้ว';
       }
     } catch(e){}
   });
 
-  // Listener: เมื่อ Computer พร้อม -> แสดงปุ่ม Start
   document.addEventListener('career-ready', (ev) => {
     try {
       const d = ev.detail || {};
-      console.debug('main: career-ready', d);
       if (d.career === 'Computer') {
         if (startButton) {
-          startButton.style.display = 'inline-block'; // โชว์ปุ่ม
+          startButton.style.display = 'inline-block';
           startButton.disabled = false;
           startButton.textContent = 'แตะเพื่อเริ่ม AR';
-          
           setMainProgress(100);
           loadingText.textContent = 'พร้อมเริ่มต้น — แตะเพื่อเริ่ม';
         }
@@ -62,51 +56,60 @@ async function main(){
     } catch(e){}
   });
 
-  // เริ่มกระบวนการ Preload
-  console.debug('main: calling preloadAll');
-  const timeoutMs = 8000; // 8 วินาที
-  
-  const preloadPromise = preloadAll((pct) => {
-    setMainProgress(pct);
-  });
-  
+  const timeoutMs = 8000;
+  const preloadPromise = preloadAll((pct) => { setMainProgress(pct); });
   const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), timeoutMs));
   
-  const res = await Promise.race([preloadPromise, timeoutPromise]).catch(e => { 
-    console.error('preloadAll rejected', e); 
-    return { error: e }; 
-  });
+  const res = await Promise.race([preloadPromise, timeoutPromise]).catch(e => { return { error: e }; });
 
   if (res && res.timedOut) {
-    console.warn('preloadAll timed out');
     if (lastMainPct < 30) setMainProgress(30);
     loadingText.textContent = 'เครือข่ายล่าช้า กรุณารอสักครู่';
     try { preloadRemaining().catch(e=>console.warn(e)); } catch(e){}
   }
 
-  // Logic เมื่อกดปุ่ม Start
+  // --- Logic ปุ่ม Start (แก้ใหม่) ---
   if (!startButton) return;
   startButton.addEventListener('click', async () => {
-    // 🔥🔥 ลบส่วน getUserMedia ที่ซ้ำซ้อนออก 🔥🔥
-    // ปล่อยให้ AR.initAndStart() เป็นคนขอกล้องเอง เพื่อลดความขัดแย้งบน Android
     
-    // ซ่อนหน้าโหลด เปิดหน้า AR
+    // 1. 🔥 ขอกล้องแบบชัดเจน (Explicit Check) 🔥
+    // เพื่อให้ Browser เด้งถาม Permission ทันทีที่กดปุ่ม
+    // และเพื่อเช็คว่า User บล็อกกล้องไว้หรือไม่
+    try {
+        loadingText.textContent = 'กำลังขออนุญาตใช้กล้อง...';
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: 'environment' } 
+        });
+        
+        // ถ้าผ่าน = อนุญาตแล้ว -> ปิด Stream ทิ้งทันที (เพื่อไม่ให้ชนกับ AR Engine)
+        stream.getTracks().forEach(track => track.stop());
+        
+    } catch(e) {
+        // ถ้า Error ตรงนี้ แปลว่า User บล็อกกล้อง หรือ เครื่องไม่มีกล้อง
+        console.warn('Camera permission failed', e);
+        alert(`❌ ไม่สามารถเปิดกล้องได้: ${e.name}\n(กรุณากดที่รูปกุญแจ 🔒 บนช่องใส่เว็บ เพื่ออนุญาตกล้อง)`);
+        loadingText.textContent = 'กรุณาอนุญาตกล้องแล้วกดรีเฟรช';
+        return; // จบการทำงาน ไม่ไปต่อ
+    }
+
+    // 2. ถ้าผ่านด่านแรกมาได้ -> เริ่มระบบ AR
     loadingScreen.style.display = 'none';
     container.style.display = 'block';
     if (scanFrame) scanFrame.style.display = 'flex';
 
-    // เริ่มระบบ AR
     try {
       await AR.initAndStart(container);
-      initUI(); // Re-init UI เพื่อความชัวร์
-    } catch(e){ 
-      console.error('initAndStart err', e); 
-      // แจ้งเตือนถ้ามีปัญหา (เช่น ไม่ได้ใช้ HTTPS)
-      alert('ไม่สามารถเริ่ม AR ได้ (กรุณาตรวจสอบว่าเปิดผ่าน HTTPS หรือยัง)');
+      initUI(); 
+    } catch(e) { 
+      console.error('initAndStart err', e);
       
-      // ถ้า Error ให้แสดงหน้าโหลดกลับมา
+      // แจ้ง Error แบบละเอียด (จะได้รู้ว่าไฟล์ไหนหาย หรือโค้ดพังตรงไหน)
+      alert(`⚠️ ระบบ AR เริ่มต้นไม่สำเร็จ: ${e.message}\n(อาจเกิดจากไฟล์ Marker หรือ Model โหลดไม่ได้)`);
+      
+      // กู้คืนหน้าจอโหลด
       loadingScreen.style.display = 'flex';
       container.style.display = 'none';
+      loadingText.textContent = 'เกิดข้อผิดพลาด กรุณารีเฟรช';
     }
   }, { once: true });
 }
