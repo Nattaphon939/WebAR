@@ -1,5 +1,5 @@
 // /WEB/js/ar.js
-// Final Fixed: Enable Touch Rotation (Pointer Events)
+// Optimized: Performance Tuning for Android (Pixel Ratio = 1)
 
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
@@ -117,7 +117,7 @@ function attachContentToAnchor(gltf, video) {
     gltfModel = gltf.scene;
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
-    gltfModel.scale.set(0.7, 0.7, 0.7);
+    gltfModel.scale.set(0.5, 0.5, 0.5);
     gltfModel.position.set(-0.25, -0.45, 0.1); 
     gltfModel.visible = true; 
     if (contentGroup) contentGroup.add(gltfModel);
@@ -148,7 +148,8 @@ function attachContentToAnchor(gltf, video) {
     const texture = new THREE.VideoTexture(videoElem);
     try { texture.colorSpace = THREE.SRGBColorSpace; } catch(e){}
     
-    const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
+    // 🔥 Optimize: ลด Segments ของ Plane ลงเพื่อประหยัด Vertex
+    const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9), 1, 1); 
     const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false, side: THREE.DoubleSide });
     videoMesh = new THREE.Mesh(plane, mat);
     videoMesh.visible = true; 
@@ -160,11 +161,11 @@ function attachContentToAnchor(gltf, video) {
         const asp = (videoElem.videoWidth / videoElem.videoHeight) || (9/16);
         const width = 0.6; const height = width / asp;
         if (videoMesh.geometry) videoMesh.geometry.dispose();
-        videoMesh.geometry = new THREE.PlaneGeometry(width, height);
+        videoMesh.geometry = new THREE.PlaneGeometry(width, height, 1, 1);
         videoMesh.position.set(0, 0, 0);
 
         if (gltfModel) {
-            gltfModel.scale.set(0.7, 0.7, 0.7);
+            gltfModel.scale.set(0.5, 0.5, 0.5);
             gltfModel.rotation.set(0, 0.15, 0); 
             gltfModel.updateMatrixWorld(true);
             
@@ -218,24 +219,29 @@ export async function initAndStart(containerElement) {
   activeCamera = camera;
   
   try {
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // 🔥🔥 OPTIMIZATION START 🔥🔥
+    // 1. บังคับ Pixel Ratio เป็น 1 เท่านั้น (ช่วยเรื่อง FPS มากที่สุดบน Android)
+    renderer.setPixelRatio(1); 
+    
     const w = (containerElement?.clientWidth) || window.innerWidth;
     const h = (containerElement?.clientHeight) || window.innerHeight;
     renderer.setSize(w, h, false);
+
     if (renderer.domElement) {
         renderer.domElement.style.display = 'block';
-        
-        // 🔥🔥 FIX 1: บังคับให้ Canvas รับ Touch Event (สำคัญมาก) 🔥🔥
-        // ถ้าไม่ใส่บรรทัดนี้ บางเครื่องจะคิดว่า Canvas เป็นแค่ภาพพื้นหลัง
         renderer.domElement.style.pointerEvents = 'auto'; 
-        
-        // บังคับ z-index ให้สูงกว่า video background (ที่มักเป็น -1 หรือ -2)
         renderer.domElement.style.zIndex = '10'; 
         renderer.domElement.style.position = 'absolute';
         renderer.domElement.style.top = '0';
         renderer.domElement.style.left = '0';
     }
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    
+    // 2. ปิด Auto Clear ถ้าไม่จำเป็น (แต่ในที่นี้เปิดไว้ปลอดภัยกว่า)
+    // renderer.autoClear = false; 
+
+    // 🔥🔥 OPTIMIZATION END 🔥🔥
+
   } catch(e) {}
   
   Utils.createLights(scene);
@@ -262,7 +268,6 @@ export async function initAndStart(containerElement) {
         const sf = scanFrame();
         if(sf) sf.style.display = 'none';
 
-        // สร้างกล้องใหม่
         const w = window.innerWidth;
         const h = window.innerHeight;
         worldCamera = new THREE.PerspectiveCamera(70, w / h, 0.1, 1000);
@@ -280,18 +285,17 @@ export async function initAndStart(containerElement) {
         contentGroup.rotation.set(0, 0, 0);
         contentGroup.scale.set(1, 1, 1);
 
-        // 🔥🔥 FIX 2: เคลียร์ Controls เก่าก่อนสร้างใหม่ เพื่อกันบั๊ก 🔥🔥
         if (controls) controls.dispose();
-
-        // สร้าง Controls ใหม่ผูกกับ Canvas (renderer.domElement)
         controls = new OrbitControls(activeCamera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.enableZoom = true;
         
-        // ปิด Pan (ไม่ให้ลากย้ายที่) แต่เปิด Rotate (ให้หมุนได้)
+        // 🔥 ปรับจูน Controls ให้ลื่นขึ้น
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08; // เพิ่มความหนืดนิดหน่อยให้รู้สึกนุ่มนวล
+        controls.rotateSpeed = 0.8;    // ลดความไวนิดนึงให้คุมง่าย
+        
+        controls.enableZoom = true;
         controls.enablePan = false; 
-        controls.enableRotate = true; // ยืนยันว่าเปิด
+        controls.enableRotate = true;
         
         controls.target.set(0, 0, 0);
         controls.update();
@@ -303,6 +307,7 @@ export async function initAndStart(containerElement) {
                  worldCamera.aspect = newW / newH;
                  worldCamera.updateProjectionMatrix();
                  renderer.setSize(newW, newH);
+                 renderer.setPixelRatio(1); // ย้ำ Pixel Ratio อีกทีตอนหมุนจอ
              }
         });
 
@@ -315,10 +320,7 @@ export async function initAndStart(containerElement) {
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
-    
-    // อัปเดตการหมุน
     if (controls) controls.update();
-
     if (activeCamera) renderer.render(scene, activeCamera);
   });
 }
