@@ -1,19 +1,24 @@
-// /WEB/js/ar.js (Fixed: Rotation Direction)
+// /WEB/js/ar.js
+// Fixed: Single Scan + Video Texture Fix + Robust Camera Setup
+
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// 1. นำเข้า Loader และ Data
-import { ensureCareerAssets, getAssets, JOB_ROOT, careers } from './loader.js';
-
-// 2. นำเข้า Utils
+import { ensureCareerAssets, getAssets, JOB_ROOT } from './loader.js';
 import * as Utils from './ar-utils.js';
 
 // --- Global State ---
 const assets = getAssets();
-let mindarThree, renderer, scene, camera;
+let mindarThree, renderer, scene, camera; // camera ของ AR
+let activeCamera = null; // กล้องที่ใช้ render ปัจจุบัน
+let worldCamera = null;  // กล้องโหมด Lock
+let headLight = null;    // แสงส่องตามกล้อง
+
 let anchor, contentGroup = null; 
 let gltfModel = null, videoElem = null, videoMesh = null;
 let mixer = null, clock = new THREE.Clock();
+let controls = null;
 
 let playingCareer = null;
 let lastCareer = null;
@@ -23,10 +28,8 @@ let isVideoFinished = false;
 let isModelFinished = false;
 let autoPlayEnabled = true;
 
-let isAnchorTracked = false;
-let waitingForMarkerPlay = false;
-let pausedByTrackingLoss = false;
-let noScanMode = false;
+let isWorldMode = false;     
+let isAnchorTracked = false; 
 
 // --- DOM References ---
 const scanFrame = () => document.getElementById('scan-frame');
@@ -35,23 +38,28 @@ const careerActions = () => document.getElementById('career-actions');
 const backBtn = () => document.getElementById('backBtn');
 
 // --- Exported Functions ---
-
 export function setAutoPlayEnabled(flag) { autoPlayEnabled = !!flag; }
 
 export function setNoScan(flag) {
-  noScanMode = !!flag;
-  Utils.setNoScanUI(flag, scanFrame());
+  if (flag) {
+    document.body.classList.add('no-scan');
+    const sf = scanFrame();
+    if (sf) sf.style.display = 'none';
+  } else {
+    document.body.classList.remove('no-scan');
+    if (!isWorldMode) {
+        const sf = scanFrame();
+        if (sf) sf.style.display = 'flex';
+    }
+  }
 }
-
 export function getAssetsReference() { return assets; }
 
 // --- Core Logic ---
-
 function checkBothFinished() {
   if (videoElem && !isVideoFinished) return;
   if (mixer && !isModelFinished) return;
   
-  // Finish Sequence
   lastCareer = playingCareer;
   clearAnchorContent(false);
   playingCareer = null;
@@ -62,8 +70,7 @@ function checkBothFinished() {
   }
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
-  if (scanFrame()) scanFrame().style.display = 'none';
-
+  
   try { document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: lastCareer } })); } catch(e){}
 }
 
@@ -72,8 +79,6 @@ function clearAnchorContent(keep=false) {
     if (videoElem) try { videoElem.pause(); } catch(e){}
     if (mixer) try { mixer.timeScale = 0; } catch(e){}
     isPausedByBack = true;
-    waitingForMarkerPlay = false;
-    pausedByTrackingLoss = false;
     return;
   }
   
@@ -88,11 +93,16 @@ function clearAnchorContent(keep=false) {
   mixer = null;
 
   if (videoElem) {
-    try{ videoElem.pause(); videoElem.onended = null; videoElem.src = ""; videoElem.load(); }catch{} 
+    // 🔥 ลบ Video Element ออกจาก Body ด้วยเมื่อเลิกใช้
+    try { 
+        if(videoElem.parentNode) videoElem.parentNode.removeChild(videoElem);
+        videoElem.pause(); 
+        videoElem.onended = null; 
+        videoElem.src = ""; 
+        videoElem.load(); 
+    } catch(e){} 
   }
   videoElem = null;
-
-  waitingForMarkerPlay = false; pausedByTrackingLoss = false;
   isVideoFinished = false; isModelFinished = false;
 }
 
@@ -108,20 +118,12 @@ function attachContentToAnchor(gltf, video) {
     gltfModel = gltf.scene;
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
-    // Config Scale/Position
     gltfModel.scale.set(0.5, 0.5, 0.5);
-    gltfModel.position.set(-0.25, -0.45, 0.1);
-    gltfModel.visible = false;
-    
+    gltfModel.position.set(-0.25, -0.45, 0.1); 
+    gltfModel.visible = true; 
     if (contentGroup) contentGroup.add(gltfModel);
-    
-    // ✅ แก้ไขจุดที่ 1: เปลี่ยนจาก -0.4 เป็น 0.4 (หมุนกลับด้าน)
-    try { 
-        gltfModel.rotation.set(0, 0.15, 0); 
-        gltfModel.updateMatrixWorld(true); 
-    } catch(e){}
+    try { gltfModel.rotation.set(0, 0.15, 0); gltfModel.updateMatrixWorld(true); } catch(e){}
 
-    // Animation
     const animations = (gltf.animations && gltf.animations.length > 0) ? gltf.animations : (gltfModel.userData && Array.isArray(gltfModel.userData._clips) ? gltfModel.userData._clips : null);
     if (animations && animations.length > 0) {
       mixer = new THREE.AnimationMixer(gltfModel);
@@ -148,35 +150,27 @@ function attachContentToAnchor(gltf, video) {
     try { texture.colorSpace = THREE.SRGBColorSpace; } catch(e){}
     
     const plane = new THREE.PlaneGeometry(0.6, 0.6 * (16/9));
-    const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+    const mat = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false, side: THREE.DoubleSide });
     videoMesh = new THREE.Mesh(plane, mat);
-    videoMesh.visible = false;
+    videoMesh.visible = true; 
     if (contentGroup) contentGroup.add(videoMesh);
     Utils.makeVideoLayer(videoMesh);
 
-    // Align Video & Model
     videoElem.onloadedmetadata = () => {
       try {
         const asp = (videoElem.videoWidth / videoElem.videoHeight) || (9/16);
         const width = 0.6; const height = width / asp;
-        
         if (videoMesh.geometry) videoMesh.geometry.dispose();
         videoMesh.geometry = new THREE.PlaneGeometry(width, height);
         videoMesh.position.set(0, 0, 0);
 
         if (gltfModel) {
-            gltfModel.visible = true;
             gltfModel.scale.set(0.5, 0.5, 0.5);
-            
-            // ✅ แก้ไขจุดที่ 2: เปลี่ยนจาก -0.4 เป็น 0.4 เช่นกัน
             gltfModel.rotation.set(0, 0.15, 0); 
-            
             gltfModel.updateMatrixWorld(true);
             
             const targetX = -0.35; 
             const videoBottom = -height / 2;
-            
-            // Auto align feet
             gltfModel.position.set(0, 0, 0); gltfModel.updateMatrixWorld(true);
             const box = new THREE.Box3().setFromObject(gltfModel);
             const feetOffset = box.min.y; 
@@ -195,27 +189,16 @@ function attachContentToAnchor(gltf, video) {
 
 async function ensureContentForCareer(career) {
   if (!career) return;
-  // ใช้ Loader โหลดของให้ (ไม่ต้องเขียน Fetch เอง)
   await ensureCareerAssets(career);
-
   const a = assets[career] || {};
+  if (gltfModel && gltfModel.userData.sourceCareer !== career) clearAnchorContent(false);
   if (!gltfModel && a.modelBlobUrl) {
     const g = await Utils.loadGLTF(a.modelBlobUrl);
-    if (g) {
-      attachContentToAnchor(g, null);
-      if (isAnchorTracked && gltfModel) {
-        try { gltfModel.visible = true; if (mixer) mixer.timeScale = 1; } catch(e){}
-      }
-    }
+    if (g) attachContentToAnchor(g, null);
   }
   if (!videoMesh && a.videoBlobUrl) {
     const v = Utils.makeVideoElem(a.videoBlobUrl);
-    if (v) {
-      attachContentToAnchor(gltfModel ? { scene: gltfModel } : null, v);
-      if (isAnchorTracked && videoElem) {
-        try { videoMesh.visible = true; } catch(e){}
-      }
-    }
+    if (v) attachContentToAnchor(gltfModel ? { scene: gltfModel } : null, v);
   }
 }
 
@@ -227,14 +210,14 @@ export async function initAndStart(containerElement) {
   mindarThree = new MindARThree({
     container: containerElement,
     imageTargetSrc: markerSrc,
-    sticky: true,
+    sticky: false,
     filterMinCF: 0.0001, filterBeta: 0.005,
     uiScanning: "no", uiLoading: "no"
   });
   
   ({ renderer, scene, camera } = mindarThree);
+  activeCamera = camera;
   
-  // Renderer Setup
   try {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     const w = (containerElement?.clientWidth) || window.innerWidth;
@@ -248,7 +231,7 @@ export async function initAndStart(containerElement) {
   
   anchor = mindarThree.addAnchor(0);
   contentGroup = new THREE.Group();
-  anchor.group.add(contentGroup);
+  anchor.group.add(contentGroup); 
 
   try { setNoScan(false); } catch(e){}
 
@@ -260,130 +243,87 @@ export async function initAndStart(containerElement) {
   // --- Event: Target Found ---
   anchor.onTargetFound = async () => {
     isAnchorTracked = true;
-    hideScanFrameThen(async () => {
-      try { await ensureContentForCareer(playingCareer); } catch(e){}
-      try { if(contentGroup) {
-          if (!contentGroup.parent) anchor.group.add(contentGroup);
-          contentGroup.visible = true;
-      }} catch(e){}
-      try { if (gltfModel) gltfModel.visible = true; } catch(e){}
-      try { if (videoMesh) videoMesh.visible = true; } catch(e){}
+    
+    if (!isWorldMode) {
+        console.log("🎯 First Scan! Switching to World Camera...");
+        isWorldMode = true;
 
-      if (videoElem && videoElem.videoWidth) { try { videoElem.dispatchEvent(new Event('loadedmetadata')); } catch(e){} }
-      if (!autoPlayEnabled) return;
+        const sf = scanFrame();
+        if(sf) sf.style.display = 'none';
 
-      if (pausedByTrackingLoss) {
-        // Resume logic
-        setTimeout(async () => {
-            if (videoElem && videoElem.paused) {
-              const onPlayingResume = () => { Utils.syncModelToVideo(videoElem, mixer, gltfModel); videoElem.removeEventListener('playing', onPlayingResume); };
-              videoElem.addEventListener('playing', onPlayingResume);
-              try { await videoElem.play(); } catch(err){ try { videoElem.muted=true; await videoElem.play(); } catch(e){} }
-            }
-        }, 500);
-        pausedByTrackingLoss = false; waitingForMarkerPlay = false;
-        return;
-      }
+        // 🔥 สร้างกล้องใหม่ด้วยค่ามาตรฐาน (FOV 70) ไม่พึ่งค่าจาก MindAR
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        worldCamera = new THREE.PerspectiveCamera(70, w / h, 0.1, 1000);
+        worldCamera.position.set(0, 0, 2); // ถอยออกมา 2 เมตร
+        worldCamera.lookAt(0, 0, 0);
 
-      // Start New
-      const startNow = async () => {
-        // Reload Fallback
-        try {
-            const a = assets[playingCareer] || {};
-            if (!mixer && a.modelBlobUrl) {
-              const reGltf = await Utils.loadGLTF(a.modelBlobUrl);
-              if (reGltf && reGltf.scene) attachContentToAnchor(reGltf, videoElem);
-            }
-        } catch(e){}
+        // 🔥 เพิ่ม Headlight (แสงส่องจากกล้อง) เพื่อให้มั่นใจว่าโมเดลสว่าง
+        headLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        worldCamera.add(headLight); // เอาไฟติดกล้อง
+        scene.add(worldCamera);     // เอากล้อง(พร้อมไฟ)เข้า Scene
 
-        if (gltfModel?.userData?._actions) {
-             gltfModel.userData._actions.forEach(a => { try{ a.play(); a.paused=true; a.enabled=true; }catch(e){} });
-        }
-        
-        if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
-        Utils.preSyncPose(0, mixer, gltfModel);
-        
-        setTimeout(async () => {
-            if (videoElem) {
-               const onVideoStart = () => { Utils.syncModelToVideo(videoElem, mixer, gltfModel); videoElem.removeEventListener('playing', onVideoStart); };
-               videoElem.addEventListener('playing', onVideoStart);
-               try { videoElem.currentTime = 0; await videoElem.play(); } 
-               catch(e){ try{ videoElem.muted=true; await videoElem.play(); }catch(ee){} if(mixer) mixer.timeScale=1; }
-            } else {
-                if (mixer) { try { mixer.timeScale = 1; mixer.update(0); } catch(e){} }
-            }
-        }, 500); 
-      };
+        // สลับกล้อง
+        activeCamera = worldCamera;
 
-      if (waitingForMarkerPlay || (videoElem && videoElem.paused && playingCareer)) {
-        startNow();
-        waitingForMarkerPlay = false;
-      }
-    });
-  };
+        // ย้าย Content
+        scene.add(contentGroup);
+        contentGroup.position.set(0, 0, 0);
+        contentGroup.rotation.set(0, 0, 0);
+        contentGroup.scale.set(1, 1, 1);
 
-  // --- Event: Target Lost ---
-  anchor.onTargetLost = () => {
-    isAnchorTracked = false;
-    const cm = careerMenu();
-    let isMenuOpen = false;
-    if (cm) {
-        const st = window.getComputedStyle(cm);
-        isMenuOpen = (st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0');
+        // Setup Controls
+        controls = new OrbitControls(activeCamera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.enableZoom = true;
+        controls.enablePan = false;
+        controls.target.set(0, 0, 0);
+        controls.update();
+
+        // Handle Resize สำหรับกล้องใหม่
+        window.addEventListener('resize', () => {
+             if(activeCamera === worldCamera) {
+                 const newW = window.innerWidth;
+                 const newH = window.innerHeight;
+                 worldCamera.aspect = newW / newH;
+                 worldCamera.updateProjectionMatrix();
+                 renderer.setSize(newW, newH);
+             }
+        });
+
+        startPlaybackSequence();
     }
-
-    const sf = scanFrame();
-    if (sf) {
-        if (isMenuOpen) sf.style.display = 'none';
-        else {
-            sf.style.display = 'flex'; Array.from(sf.querySelectorAll('*')).forEach(n => n.style.display = '');
-            document.body.classList.remove('no-scan');
-        }
-    }
-
-    if (!autoPlayEnabled) return;
-    if (videoElem && !videoElem.paused) {
-      try { videoElem.pause(); videoElem.currentTime = Math.max(0, videoElem.currentTime - 0.4); pausedByTrackingLoss = true; } catch(e){}
-    }
-    if (mixer) try { mixer.timeScale = 0; } catch(e){}
   };
 
   await mindarThree.start();
+  
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
-    if (isAnchorTracked && camera && contentGroup) {
-        const camPos = camera.position;
-        const worldPos = new THREE.Vector3();
-        contentGroup.getWorldPosition(worldPos);
-        contentGroup.lookAt(new THREE.Vector3(camPos.x, worldPos.y, camPos.z));
-    }
-    renderer.render(scene, camera);
+    if (controls) controls.update();
+    if (activeCamera) renderer.render(scene, activeCamera);
   });
 }
 
-// --- Controls ---
+async function startPlaybackSequence() {
+    if (!autoPlayEnabled) return;
+    try { if (gltfModel) gltfModel.visible = true; } catch(e){}
+    try { if (videoMesh) videoMesh.visible = true; } catch(e){}
+    
+    if (videoElem) {
+        try { videoElem.currentTime = 0; } catch(e){}
+        Utils.preSyncPose(0, mixer, gltfModel);
 
-function hideScanFrameThen(callback) {
-  const sf = scanFrame();
-  if (!sf || noScanMode) { if(callback) callback(); return; }
-  
-  const cm = careerMenu();
-  try {
-    const cmStyle = cm ? window.getComputedStyle(cm) : null;
-    if (cm && cmStyle && cmStyle.display !== 'none' && cmStyle.visibility !== 'hidden' && cmStyle.opacity !== '0') {
-      sf.style.display = 'none'; if(callback) callback(); return;
+        setTimeout(async () => {
+            const onPlayNew = () => { Utils.syncModelToVideo(videoElem, mixer, gltfModel); videoElem.removeEventListener('playing', onPlayNew); };
+            videoElem.addEventListener('playing', onPlayNew);
+            try { await videoElem.play(); } 
+            catch(e){ try { videoElem.muted = true; await videoElem.play(); } catch(ee){} if(mixer) mixer.timeScale = 1; }
+        }, 500);
+    } else if (mixer) {
+        mixer.timeScale = 1;
     }
-  } catch(e){}
-
-  const curDisplay = window.getComputedStyle(sf).display;
-  if (curDisplay === 'none') { if (callback) callback(); return; }
-  
-  sf.style.transition = 'opacity 200ms ease'; sf.style.opacity = '1'; sf.offsetHeight; sf.style.opacity = '0';
-  setTimeout(()=> {
-    try { sf.style.display = 'none'; sf.style.transition = ''; sf.style.opacity = '1'; } catch(e){}
-    if (callback) callback();
-  }, 220);
 }
 
 export async function playCareer(career) {
@@ -396,79 +336,42 @@ export async function playCareer(career) {
   }
 
   setAutoPlayEnabled(true);
-  setNoScan(false);
-
-  if (isAnchorTracked) { const sf = scanFrame(); if(sf) sf.style.display = 'none'; }
-
-  // Resume Case
+  
   if (playingCareer === career) {
     isPausedByBack = false;
-    if (isAnchorTracked) {
-        try { if(contentGroup) { if(!contentGroup.parent) anchor.group.add(contentGroup); contentGroup.visible = true; } } catch(e){}
-        Utils.ensureDracoInitialized(); // just in case
-        if(videoElem) Utils.preSyncPose(videoElem.currentTime, mixer, gltfModel);
-        
-        setTimeout(async() => {
-           if (videoElem) {
-               const onResume = () => { Utils.syncModelToVideo(videoElem, mixer, gltfModel); videoElem.removeEventListener('playing', onResume); };
-               videoElem.addEventListener('playing', onResume);
-               videoElem.play().catch(()=>{}); 
-           } else if (mixer) mixer.timeScale = 1;
-       }, 500);
-    } else { waitingForMarkerPlay = true; }
+    if (isWorldMode) {
+        if(videoElem) videoElem.play().catch(()=>{});
+        if(mixer) mixer.timeScale = 1;
+    } 
     return;
   }
 
-  // Change Career
-  if (playingCareer && playingCareer !== career) {
-    clearAnchorContent(false);
-    playingCareer = null; isPausedByBack = false; waitingForMarkerPlay = false; pausedByTrackingLoss = false;
-  }
+  clearAnchorContent(false); 
+  playingCareer = career; 
+  lastCareer = career; 
+  isPausedByBack = false;
 
-  // Load via Loader
-  await ensureCareerAssets(career); // Wait for loader
-  try { await ensureContentForCareer(career); } catch(e){}
+  await ensureContentForCareer(career);
 
-  // Setup if loaded
-  const a = assets[career] || {};
-  if (gltfModel && gltfModel.userData && gltfModel.userData.sourceCareer !== career) clearAnchorContent(false);
-
-  if (!gltfModel && a.modelBlobUrl) {
-    try { const g = await Utils.loadGLTF(a.modelBlobUrl); attachContentToAnchor(g, null); } catch(e){}
-  }
-  if (!videoElem && a.videoBlobUrl) {
-    try { const v = Utils.makeVideoElem(a.videoBlobUrl); attachContentToAnchor(gltfModel ? { scene: gltfModel } : null, v); } catch(e){}
-  }
-
-  playingCareer = career; lastCareer = career; isPausedByBack = false;
-
-  if (isAnchorTracked && autoPlayEnabled) {
-    try { if (gltfModel) gltfModel.visible = true; } catch(e){}
-    try { if (videoMesh) videoMesh.visible = true; } catch(e){}
-    await new Promise(r => requestAnimationFrame(r));
-    
-    if (videoElem && videoElem.videoWidth) { try { videoElem.dispatchEvent(new Event('loadedmetadata')); } catch(e){} }
-    if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
-    Utils.preSyncPose(0, mixer, gltfModel);
-
-    setTimeout(async () => {
-        if (videoElem) {
-            const onPlayNew = () => { Utils.syncModelToVideo(videoElem, mixer, gltfModel); videoElem.removeEventListener('playing', onPlayNew); };
-            videoElem.addEventListener('playing', onPlayNew);
-            try { videoElem.currentTime = 0; await videoElem.play(); } 
-            catch(e){ try { videoElem.muted = true; await videoElem.play(); } catch(ee){} if(mixer) mixer.timeScale = 1; }
-        } else if(mixer) mixer.timeScale = 1;
-    }, 500);
-
-    waitingForMarkerPlay = false;
+  if (isWorldMode) {
+      if (contentGroup) {
+          contentGroup.visible = true;
+          contentGroup.rotation.set(0, 0, 0);
+          contentGroup.position.set(0, 0, 0); 
+          if(controls) {
+              controls.reset();
+              activeCamera.position.set(0, 0, 2);
+              activeCamera.lookAt(0, 0, 0);
+          }
+      }
+      startPlaybackSequence();
   } else {
-    if (videoElem) try { videoElem.currentTime = 0; } catch(e){}
-    waitingForMarkerPlay = true;
+      setNoScan(false);
   }
 }
 
 export function pauseAndShowMenu() {
-  if (videoElem) try { videoElem.pause(); videoElem.currentTime = Math.max(0, videoElem.currentTime - 0.4); } catch(e){}
+  if (videoElem) try { videoElem.pause(); } catch(e){}
   if (mixer) try { mixer.timeScale = 0; } catch(e){}
   isPausedByBack = true;
   setAutoPlayEnabled(false);
@@ -476,7 +379,6 @@ export function pauseAndShowMenu() {
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
   try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'inline-block'; } catch(e){}
-  setNoScan(true); waitingForMarkerPlay = false; pausedByTrackingLoss = false;
 }
 
 export function returnToLast() {
@@ -486,17 +388,22 @@ export function returnToLast() {
 
 export function removeCurrentAndShowMenu() {
   clearAnchorContent(false);
-  playingCareer = null; isPausedByBack = false; setAutoPlayEnabled(true);
+  playingCareer = null; 
+  isPausedByBack = false; 
+  setAutoPlayEnabled(true);
   if (careerActions()) careerActions().style.display = 'none';
   if (careerMenu()) careerMenu().style.display = 'flex';
   if (backBtn()) backBtn().style.display = 'none';
   try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
-  setNoScan(true); waitingForMarkerPlay = false; pausedByTrackingLoss = false;
+  setNoScan(true);
 }
 
 export function resetToIdle() {
   try { clearAnchorContent(false); } catch(e){}
-  playingCareer = null; lastCareer = null; isPausedByBack = false; waitingForMarkerPlay = false; pausedByTrackingLoss = false; setAutoPlayEnabled(false);
+  playingCareer = null; 
+  lastCareer = null; 
+  isPausedByBack = false; 
+  setAutoPlayEnabled(false);
   try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
   setNoScan(true);
 }

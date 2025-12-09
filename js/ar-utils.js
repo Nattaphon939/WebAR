@@ -1,4 +1,6 @@
 // /WEB/js/ar-utils.js
+// Final Version: Video Texture Fix included
+
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -45,9 +47,24 @@ export function makeVideoElem(blobUrl) {
   v.src = blobUrl;
   v.crossOrigin = 'anonymous';
   v.playsInline = true;
-  v.muted = false;
+  v.muted = false; // เปิดเสียง
   v.loop = false; 
   v.preload = 'auto';
+
+  // 🔥🔥 FIX: ต้องเอา Video Element ใส่เข้าไปใน DOM เสมอ 🔥🔥
+  // ไม่งั้น Browser บนมือถือ (iOS/Android) จะไม่เรนเดอร์ภาพลง Texture (ได้ยินแต่เสียง)
+  // เราตั้งค่าให้มันซ่อนอยู่หลังสุดและจางมากจนมองไม่เห็น
+  v.style.position = 'fixed';
+  v.style.top = '0';
+  v.style.left = '0';
+  v.style.width = '1px';
+  v.style.height = '1px';
+  v.style.opacity = '0.01'; // ห้ามใช้ 0 หรือ display:none บางเครื่องจะหยุดเล่น
+  v.style.zIndex = '-1000';
+  v.style.pointerEvents = 'none';
+  
+  document.body.appendChild(v); // แปะเข้า Body
+
   return v;
 }
 
