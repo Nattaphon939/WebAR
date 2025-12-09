@@ -117,7 +117,7 @@ function attachContentToAnchor(gltf, video) {
     gltfModel = gltf.scene;
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
-    gltfModel.scale.set(0.5, 0.5, 0.5);
+    gltfModel.scale.set(0.7, 0.7, 0.7);
     gltfModel.position.set(-0.25, -0.45, 0.1); 
     gltfModel.visible = true; 
     if (contentGroup) contentGroup.add(gltfModel);
@@ -164,7 +164,7 @@ function attachContentToAnchor(gltf, video) {
         videoMesh.position.set(0, 0, 0);
 
         if (gltfModel) {
-            gltfModel.scale.set(0.5, 0.5, 0.5);
+            gltfModel.scale.set(0.7, 0.7, 0.7);
             gltfModel.rotation.set(0, 0.15, 0); 
             gltfModel.updateMatrixWorld(true);
             
