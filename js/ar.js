@@ -1,5 +1,5 @@
 // /WEB/js/ar.js
-// Fixed: Single Scan + Video Texture Fix + Robust Camera Setup
+// Final Fixed: Enable Touch Rotation (Pointer Events)
 
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
@@ -10,10 +10,10 @@ import * as Utils from './ar-utils.js';
 
 // --- Global State ---
 const assets = getAssets();
-let mindarThree, renderer, scene, camera; // camera ของ AR
-let activeCamera = null; // กล้องที่ใช้ render ปัจจุบัน
-let worldCamera = null;  // กล้องโหมด Lock
-let headLight = null;    // แสงส่องตามกล้อง
+let mindarThree, renderer, scene, camera; 
+let activeCamera = null; 
+let worldCamera = null;  
+let headLight = null;    
 
 let anchor, contentGroup = null; 
 let gltfModel = null, videoElem = null, videoMesh = null;
@@ -93,7 +93,6 @@ function clearAnchorContent(keep=false) {
   mixer = null;
 
   if (videoElem) {
-    // 🔥 ลบ Video Element ออกจาก Body ด้วยเมื่อเลิกใช้
     try { 
         if(videoElem.parentNode) videoElem.parentNode.removeChild(videoElem);
         videoElem.pause(); 
@@ -223,7 +222,19 @@ export async function initAndStart(containerElement) {
     const w = (containerElement?.clientWidth) || window.innerWidth;
     const h = (containerElement?.clientHeight) || window.innerHeight;
     renderer.setSize(w, h, false);
-    if (renderer.domElement) renderer.domElement.style.display = 'block';
+    if (renderer.domElement) {
+        renderer.domElement.style.display = 'block';
+        
+        // 🔥🔥 FIX 1: บังคับให้ Canvas รับ Touch Event (สำคัญมาก) 🔥🔥
+        // ถ้าไม่ใส่บรรทัดนี้ บางเครื่องจะคิดว่า Canvas เป็นแค่ภาพพื้นหลัง
+        renderer.domElement.style.pointerEvents = 'auto'; 
+        
+        // บังคับ z-index ให้สูงกว่า video background (ที่มักเป็น -1 หรือ -2)
+        renderer.domElement.style.zIndex = '10'; 
+        renderer.domElement.style.position = 'absolute';
+        renderer.domElement.style.top = '0';
+        renderer.domElement.style.left = '0';
+    }
     renderer.outputColorSpace = THREE.SRGBColorSpace;
   } catch(e) {}
   
@@ -251,37 +262,40 @@ export async function initAndStart(containerElement) {
         const sf = scanFrame();
         if(sf) sf.style.display = 'none';
 
-        // 🔥 สร้างกล้องใหม่ด้วยค่ามาตรฐาน (FOV 70) ไม่พึ่งค่าจาก MindAR
+        // สร้างกล้องใหม่
         const w = window.innerWidth;
         const h = window.innerHeight;
         worldCamera = new THREE.PerspectiveCamera(70, w / h, 0.1, 1000);
-        worldCamera.position.set(0, 0, 2); // ถอยออกมา 2 เมตร
+        worldCamera.position.set(0, 0, 2); 
         worldCamera.lookAt(0, 0, 0);
 
-        // 🔥 เพิ่ม Headlight (แสงส่องจากกล้อง) เพื่อให้มั่นใจว่าโมเดลสว่าง
         headLight = new THREE.DirectionalLight(0xffffff, 1.0);
-        worldCamera.add(headLight); // เอาไฟติดกล้อง
-        scene.add(worldCamera);     // เอากล้อง(พร้อมไฟ)เข้า Scene
+        worldCamera.add(headLight); 
+        scene.add(worldCamera);     
 
-        // สลับกล้อง
         activeCamera = worldCamera;
 
-        // ย้าย Content
         scene.add(contentGroup);
         contentGroup.position.set(0, 0, 0);
         contentGroup.rotation.set(0, 0, 0);
         contentGroup.scale.set(1, 1, 1);
 
-        // Setup Controls
+        // 🔥🔥 FIX 2: เคลียร์ Controls เก่าก่อนสร้างใหม่ เพื่อกันบั๊ก 🔥🔥
+        if (controls) controls.dispose();
+
+        // สร้าง Controls ใหม่ผูกกับ Canvas (renderer.domElement)
         controls = new OrbitControls(activeCamera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
         controls.enableZoom = true;
-        controls.enablePan = false;
+        
+        // ปิด Pan (ไม่ให้ลากย้ายที่) แต่เปิด Rotate (ให้หมุนได้)
+        controls.enablePan = false; 
+        controls.enableRotate = true; // ยืนยันว่าเปิด
+        
         controls.target.set(0, 0, 0);
         controls.update();
 
-        // Handle Resize สำหรับกล้องใหม่
         window.addEventListener('resize', () => {
              if(activeCamera === worldCamera) {
                  const newW = window.innerWidth;
@@ -301,7 +315,10 @@ export async function initAndStart(containerElement) {
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
+    
+    // อัปเดตการหมุน
     if (controls) controls.update();
+
     if (activeCamera) renderer.render(scene, activeCamera);
   });
 }
