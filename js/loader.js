@@ -1,5 +1,5 @@
 // /WEB/js/loader.js
-// Optimized: Loads Careers + Action Buttons (Game, Contact)
+// Optimized: Parallel Loading for Faster Startup
 
 export const JOB_ROOT = './Job';
 export const careers = ['Computer','AI','Cloud','Data_Center','Network'];
@@ -19,7 +19,8 @@ function emit(name, detail={}) {
 }
 
 async function tryFind(career, list) {
-  const timeoutMs = 25000;
+  // ลด Timeout ต่อไฟล์ลงเหลือ 15s (เผื่อเน็ตช้าแต่ไม่รอนานเกินไป)
+  const timeoutMs = 15000; 
   for (const name of list || []) {
     if (!name) continue;
     const url = `${JOB_ROOT}/${career}/${name}`;
@@ -105,7 +106,7 @@ export async function preloadAll(onMainProgress = ()=>{}) {
   for (const c of careers) assets[c] = { modelBlobUrl:null, videoBlobUrl:null, markerBlobUrl:null };
   try { onMainProgress(5); } catch(e){}
 
-  // 1. Load Computer First
+  // 1. Load Computer First (Priority)
   try {
     emit('loader-phase', { phase:'computer-start' });
     await ensureCareerAssets('Computer'); 
@@ -117,20 +118,33 @@ export async function preloadAll(onMainProgress = ()=>{}) {
     onMainProgress(20);
   }
 
-  // 2. Load Others (Sequential)
+  // 2. Load Others (PARALLEL - เร็วขึ้นมาก)
   const others = careers.filter(x=> x !== 'Computer');
   
+  // ใช้ Promise.all เพื่อโหลดทุกตัวพร้อมกัน ไม่ต้องรอคิว
   (async () => {
-      for (let i = 0; i < others.length; i++) {
-          const c = others[i];
-          try {
-              await ensureCareerAssets(c);
-              const addedProgress = Math.round(30 * ((i + 1) / others.length));
-              onMainProgress(60 + addedProgress);
-          } catch(e) { console.warn('bg load err', c, e); }
-      }
+      const promises = others.map((c, i) => {
+          return ensureCareerAssets(c).then(() => {
+              // คำนวณ Progress แบบรวม
+              // (Computer=60) + (Others=40)
+              // แต่ละตัวที่เสร็จจะเพิ่ม % ให้หลอด
+          }).catch(e => console.warn('bg load err', c, e));
+      });
+
+      // รอให้ทุกตัวเสร็จ (หรือถ้าอยากให้หลอดวิ่งเลย ก็ไม่ต้อง await ตรงนี้ก็ได้ แต่เพื่อให้จบสวยๆ เราจะรอ)
+      // แต่เราจะอัปเดตหลอดโหลดเทียมๆ ระหว่างรอ
+      let completed = 0;
+      others.forEach(c => {
+         ensureCareerAssets(c).then(()=>{
+             completed++;
+             const addedProgress = Math.round(30 * (completed / others.length));
+             onMainProgress(60 + addedProgress);
+         });
+      });
+
+      await Promise.all(promises);
       
-      // 3. Load Action Button Assets (Game & Contact) - ส่วนที่เพิ่มเข้ามา
+      // 3. Load Action Button Assets (Game & Contact)
       await preloadActionAssets(); 
       
       onMainProgress(100);
@@ -149,16 +163,14 @@ export async function preloadAll(onMainProgress = ()=>{}) {
   return assets;
 }
 
-// --- ฟังก์ชันใหม่: โหลดทรัพยากรสำหรับปุ่ม Game และ Contact ---
+// --- ฟังก์ชันโหลดปุ่ม Game/Contact ---
 async function preloadActionAssets() {
-    // A. Game Assets (โหลดรายการการ์ดและเสียง)
     emit('action-progress', { id: 'game-btn', pct: 10 });
     try {
         const mfRes = await fetch(encodeURI('game_assets/manifest.json'));
         if (mfRes && mfRes.ok) {
             const mf = await mfRes.json();
             const list = [];
-            // รวบรวมรายการไฟล์ที่ต้องใช้ในเกม
             for (const item of mf) {
                 if (item.image) list.push(`game_assets/cards/${item.image}`);
                 if (item.audioWord) list.push(`game_assets/audio/${item.audioWord}`);
@@ -166,31 +178,20 @@ async function preloadActionAssets() {
             }
             list.push('game_assets/sfx/flip.wav','game_assets/sfx/match.wav','game_assets/sfx/wrong.wav','game_assets/sfx/win.mp3');
             
-            // จำลองการโหลด (ให้ Bar วิ่ง)
-            let done = 0;
-            for(let i=0; i<list.length; i+=5) { // ข้ามทีละ 5 เพื่อความเร็ว
-                await new Promise(r => setTimeout(r, 10)); 
-                done += 5;
-                let pct = Math.min(100, Math.round((done/list.length)*100));
-                emit('action-progress', { id: 'game-btn', pct: pct });
-            }
+            // โหลดจริงจังแบบ Parallel
+            const loadFile = (url) => fetch(url).catch(()=>{});
+            await Promise.all(list.map(loadFile));
+            
             emit('action-progress', { id: 'game-btn', pct: 100 });
         }
     } catch(e) { 
-        // ถ้าโหลดไม่ผ่าน ก็บังคับให้เสร็จไปเลย (เพื่อให้ปุ่มกดได้)
         emit('action-progress', { id: 'game-btn', pct: 100 }); 
     }
 
-    // B. Contact Video (โหลดวีดีโอแนะนำ)
     emit('action-progress', { id: 'contact-btn', pct: 10 });
     try {
-        const res = await fetch('Contact/Contact.mp4');
-        if(res.ok) {
-            // โหลดเสร็จแล้ว (Browser จะ Cache ไว้)
-            emit('action-progress', { id: 'contact-btn', pct: 100 });
-        } else {
-            emit('action-progress', { id: 'contact-btn', pct: 100 });
-        }
+        await fetch('Contact/Contact.mp4').catch(()=>{});
+        emit('action-progress', { id: 'contact-btn', pct: 100 });
     } catch(e){
         emit('action-progress', { id: 'contact-btn', pct: 100 });
     }

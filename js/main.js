@@ -1,5 +1,5 @@
 // /WEB/js/main.js
-// Final Robust Version: Explicit Camera Check & Detailed Error Reporting
+// Final: Robust + Mobile Timeout Friendly
 
 console.debug('main.js loaded');
 import { preloadAll, preloadRemaining } from './loader.js';
@@ -56,7 +56,9 @@ async function main(){
     } catch(e){}
   });
 
-  const timeoutMs = 8000;
+  // 🔥🔥 เพิ่มเวลา Timeout เป็น 25 วินาที (สำหรับเน็ตมือถือ) 🔥🔥
+  const timeoutMs = 25000; 
+  
   const preloadPromise = preloadAll((pct) => { setMainProgress(pct); });
   const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), timeoutMs));
   
@@ -64,35 +66,27 @@ async function main(){
 
   if (res && res.timedOut) {
     if (lastMainPct < 30) setMainProgress(30);
-    loadingText.textContent = 'เครือข่ายล่าช้า กรุณารอสักครู่';
+    // เปลี่ยนข้อความให้อุ่นใจขึ้น
+    loadingText.textContent = 'กำลังดาวน์โหลดไฟล์ขนาดใหญ่... กรุณารอสักครู่';
     try { preloadRemaining().catch(e=>console.warn(e)); } catch(e){}
   }
 
-  // --- Logic ปุ่ม Start (แก้ใหม่) ---
+  // --- Logic ปุ่ม Start ---
   if (!startButton) return;
   startButton.addEventListener('click', async () => {
-    
-    // 1. 🔥 ขอกล้องแบบชัดเจน (Explicit Check) 🔥
-    // เพื่อให้ Browser เด้งถาม Permission ทันทีที่กดปุ่ม
-    // และเพื่อเช็คว่า User บล็อกกล้องไว้หรือไม่
     try {
         loadingText.textContent = 'กำลังขออนุญาตใช้กล้อง...';
         const stream = await navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: 'environment' } 
         });
-        
-        // ถ้าผ่าน = อนุญาตแล้ว -> ปิด Stream ทิ้งทันที (เพื่อไม่ให้ชนกับ AR Engine)
         stream.getTracks().forEach(track => track.stop());
-        
     } catch(e) {
-        // ถ้า Error ตรงนี้ แปลว่า User บล็อกกล้อง หรือ เครื่องไม่มีกล้อง
         console.warn('Camera permission failed', e);
-        alert(`❌ ไม่สามารถเปิดกล้องได้: ${e.name}\n(กรุณากดที่รูปกุญแจ 🔒 บนช่องใส่เว็บ เพื่ออนุญาตกล้อง)`);
+        alert(`❌ ไม่สามารถเปิดกล้องได้: ${e.name}\n(กรุณากดที่รูปกุญแจ 🔒 เพื่ออนุญาตกล้อง)`);
         loadingText.textContent = 'กรุณาอนุญาตกล้องแล้วกดรีเฟรช';
-        return; // จบการทำงาน ไม่ไปต่อ
+        return; 
     }
 
-    // 2. ถ้าผ่านด่านแรกมาได้ -> เริ่มระบบ AR
     loadingScreen.style.display = 'none';
     container.style.display = 'block';
     if (scanFrame) scanFrame.style.display = 'flex';
@@ -102,11 +96,7 @@ async function main(){
       initUI(); 
     } catch(e) { 
       console.error('initAndStart err', e);
-      
-      // แจ้ง Error แบบละเอียด (จะได้รู้ว่าไฟล์ไหนหาย หรือโค้ดพังตรงไหน)
-      alert(`⚠️ ระบบ AR เริ่มต้นไม่สำเร็จ: ${e.message}\n(อาจเกิดจากไฟล์ Marker หรือ Model โหลดไม่ได้)`);
-      
-      // กู้คืนหน้าจอโหลด
+      alert(`⚠️ ระบบ AR เริ่มต้นไม่สำเร็จ: ${e.message}`);
       loadingScreen.style.display = 'flex';
       container.style.display = 'none';
       loadingText.textContent = 'เกิดข้อผิดพลาด กรุณารีเฟรช';
