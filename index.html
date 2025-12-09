@@ -1,68 +1,86 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-    <title>Web AR Curriculum</title>
-    
-    <style>
-        /* Base Reset */
-        body { margin: 0; overflow: hidden; }
-        
-        /* Loading Screen Setup (Assumed from previous context) */
-        #loadingScreen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: black;
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            z-index: 10000;
-        }
-        
-        /* สไตล์สำหรับแสดงหมายเลขเวอร์ชัน (Version Display) */
-        #version-display {
-            position: fixed; /* ตรึงตำแหน่งไว้ที่หน้าจอ */
-            bottom: 5px; /* ชิดขอบล่าง 5px */
-            right: 5px; /* ชิดขอบขวา 5px */
-            
-            color: #ffffff; /* ตัวอักษรสีขาว */
-            background-color: rgba(0, 0, 0, 0.6); /* พื้นหลังสีดำโปร่งแสง */
-            padding: 3px 6px;
-            font-size: 11px; /* ขนาดเล็ก */
-            z-index: 10001; 
-            border-radius: 4px;
-        }
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.1/dist/mindar-image-three.prod.js"></script>
-    
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WebAR — Phase 3 (Career Menu)</title>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    }
+  }
+  </script>
+
+  <link rel="stylesheet" href="css/style.css">
+
+  <style>
+    #version-display {
+      position: fixed;
+      top: 5px;
+      left: 5px;
+      z-index: 20000; /* ตั้งค่าสูงมากเพื่อให้ลอยอยู่เหนือทุกอย่าง รวมถึง Loading Screen */
+      color: white;
+      background-color: rgba(0, 0, 0, 0.5);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: sans-serif;
+      pointer-events: none; /* เพื่อให้คลิกทะลุได้ ไม่บังปุ่ม */
+    }
+  </style>
+
 </head>
-
 <body>
-    <div id="loadingScreen">
-        <h1>กำลังโหลดประสบการณ์ AR...</h1>
-        <p>กรุณารอสักครู่</p>
-        
-        <div id="version-display">
-            Version: V1.0.1 | Marker: 2025.12
-        </div>
-        </div>
 
-    <a-scene mindar-image="imageTargetSrc: assets/targets.mind;" 
-             color-space="sRGB" 
-             renderer="colorManagement: true, physicallyCorrectLights: true;" 
-             vr-mode-ui="enabled: false" 
-             device-orientation-permission-ui="enabled: false">
+  <div id="version-display">Version: V1.0.1 | Marker: 2025.12</div>
 
-        <a-camera active="false" position="0 0 0" look-controls="enabled: false"></a-camera>
+  <div id="loading-screen" aria-hidden="false">
+    <div class="bar-wrap">
+      <div id="bar" class="bar"></div>
+    </div>
+    <div id="loading-text">กำลังโหลดทรัพยากร... 0%</div>
+    
+    <button id="startButton" style="display: none;">แตะเพื่อเริ่ม AR</button>
+  </div>
 
-        </a-scene>
+  <div id="container"></div>
 
-    <script src="js/main.js"></script>
+  <div id="scan-frame">
+    <div class="frame">
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+      <div class="scan-line"></div>
+    </div>
+  </div>
+
+  <div id="career-menu">
+    <h2>เลือกอาชีพ</h2>
+    <div class="career-list">
+      <button class="career-btn" data-career="AI">AI</button>
+      <button class="career-btn" data-career="Cloud">Cloud</button>
+      <button class="career-btn" data-career="Data_Center">Data Center</button>
+      <button class="career-btn" data-career="Network">Network</button>
+    </div>
+
+    <div id="career-actions">
+      <button id="game-btn" class="action-btn">🎮 Memory Match Game</button>
+      <button id="survey-btn" class="action-btn">📝 แบบสำรวจ (Google Form)</button>
+      <button id="contact-btn" class="action-btn">📞 หากสนใจติดต่อ</button>
+    </div>
+
+    <div id="return-row">
+      <button id="return-btn">กลับไปเล่นคอนเทนต์เดิม</button>
+    </div>
+  </div>
+
+  <button id="backBtn">← ย้อนกลับ</button>
+
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
