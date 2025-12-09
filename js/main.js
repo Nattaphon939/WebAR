@@ -2,7 +2,7 @@
 console.debug('main.js loaded');
 import { preloadAll, preloadRemaining } from './loader.js';
 import { initUI } from './ui.js';
-import * as AR from './ar.js';
+import * as AR from './ar.js'; //
 
 const bar = document.getElementById('bar');
 const loadingText = document.getElementById('loading-text');
@@ -31,7 +31,7 @@ async function main(){
     startButton.disabled = true;
   }
 
-  // Listener: อัปเดต Progress Bar (ใช้ของ Computer เป็นหลัก)
+  // Listener: อัปเดต Progress Bar
   document.addEventListener('career-load-progress', (ev) => {
     try {
       const d = ev.detail || {};
@@ -54,11 +54,9 @@ async function main(){
           startButton.disabled = false;
           startButton.textContent = 'แตะเพื่อเริ่ม AR';
           
-          // บังคับหลอดโหลดเต็ม
           setMainProgress(100);
           loadingText.textContent = 'พร้อมเริ่มต้น — แตะเพื่อเริ่ม';
         }
-        // เริ่มโหลด Phase B (อาชีพอื่น) ต่อใน Background
         try { preloadRemaining().catch(e=>console.warn(e)); } catch(e){}
       }
     } catch(e){}
@@ -69,11 +67,9 @@ async function main(){
   const timeoutMs = 8000; // 8 วินาที
   
   const preloadPromise = preloadAll((pct) => {
-    // Callback นี้ทำงานเมื่อ loader.js อัปเดตภาพรวม
     setMainProgress(pct);
   });
   
-  // Race กับ Timeout เพื่อแจ้งเตือนหากเน็ตช้า
   const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), timeoutMs));
   
   const res = await Promise.race([preloadPromise, timeoutPromise]).catch(e => { 
@@ -81,24 +77,18 @@ async function main(){
     return { error: e }; 
   });
 
-  // กรณีโหลดนานเกินกำหนด (Timeout)
   if (res && res.timedOut) {
     console.warn('preloadAll timed out');
-    // ปรับ Progress Bar หลอกๆ ให้ผู้ใช้รู้ว่ายังทำงานอยู่
     if (lastMainPct < 30) setMainProgress(30);
-    
-    // เปลี่ยนข้อความแจ้งเตือน
     loadingText.textContent = 'เครือข่ายล่าช้า กรุณารอสักครู่';
-    
-    // พยายามโหลดต่อใน Background (ถ้า Computer เสร็จเมื่อไหร่ ปุ่มจะเด้งเองจาก Event Listener ด้านบน)
     try { preloadRemaining().catch(e=>console.warn(e)); } catch(e){}
   }
 
   // Logic เมื่อกดปุ่ม Start
   if (!startButton) return;
   startButton.addEventListener('click', async () => {
-    // ขอ Permission กล้อง
-    try { await navigator.mediaDevices.getUserMedia({ video:true }); } catch(e){ console.warn('camera permission', e); }
+    // 🔥🔥 ลบส่วน getUserMedia ที่ซ้ำซ้อนออก 🔥🔥
+    // ปล่อยให้ AR.initAndStart() เป็นคนขอกล้องเอง เพื่อลดความขัดแย้งบน Android
     
     // ซ่อนหน้าโหลด เปิดหน้า AR
     loadingScreen.style.display = 'none';
@@ -109,7 +99,15 @@ async function main(){
     try {
       await AR.initAndStart(container);
       initUI(); // Re-init UI เพื่อความชัวร์
-    } catch(e){ console.error('initAndStart err', e); alert('ไม่สามารถเริ่ม AR ได้'); }
+    } catch(e){ 
+      console.error('initAndStart err', e); 
+      // แจ้งเตือนถ้ามีปัญหา (เช่น ไม่ได้ใช้ HTTPS)
+      alert('ไม่สามารถเริ่ม AR ได้ (กรุณาตรวจสอบว่าเปิดผ่าน HTTPS หรือยัง)');
+      
+      // ถ้า Error ให้แสดงหน้าโหลดกลับมา
+      loadingScreen.style.display = 'flex';
+      container.style.display = 'none';
+    }
   }, { once: true });
 }
 
