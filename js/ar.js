@@ -161,7 +161,7 @@ function attachContentToAnchor(gltf, video) {
         const width = 0.6; const height = width / asp;
         if (videoMesh.geometry) videoMesh.geometry.dispose();
         videoMesh.geometry = new THREE.PlaneGeometry(width, height);
-        videoMesh.position.set(0, 0, 0);
+        videoMesh.position.set(0.1, 0, 0);
 
         if (gltfModel) {
             gltfModel.scale.set(0.7, 0.7, 0.7);
