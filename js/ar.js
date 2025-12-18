@@ -1,5 +1,5 @@
 // /WEB/js/ar.js
-// Final Fixed: Enable Touch Rotation (Pointer Events)
+// Final Fixed: Enable Touch Rotation (Pointer Events) & Support Multiple Markers (0 & 1)
 
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
@@ -15,7 +15,9 @@ let activeCamera = null;
 let worldCamera = null;  
 let headLight = null;    
 
-let anchor, contentGroup = null; 
+// แก้ไข: เปลี่ยนจาก anchor เดียว เป็นรองรับหลาย anchor
+let anchor0, anchor1; 
+let contentGroup = null; 
 let gltfModel = null, videoElem = null, videoMesh = null;
 let mixer = null, clock = new THREE.Clock();
 let controls = null;
@@ -204,6 +206,7 @@ async function ensureContentForCareer(career) {
 // --- Main Init ---
 
 export async function initAndStart(containerElement) {
+  // ✅ ใช้ marker.mind ที่คุณต้องรวมรูปมาแล้ว (มีทั้ง target 0 และ 1 ในไฟล์เดียว)
   const markerSrc = (assets['Computer'] && assets['Computer'].markerBlobUrl) ? assets['Computer'].markerBlobUrl : `${JOB_ROOT}/Computer/marker.mind`;
   
   mindarThree = new MindARThree({
@@ -224,12 +227,7 @@ export async function initAndStart(containerElement) {
     renderer.setSize(w, h, false);
     if (renderer.domElement) {
         renderer.domElement.style.display = 'block';
-        
-        // 🔥🔥 FIX 1: บังคับให้ Canvas รับ Touch Event (สำคัญมาก) 🔥🔥
-        // ถ้าไม่ใส่บรรทัดนี้ บางเครื่องจะคิดว่า Canvas เป็นแค่ภาพพื้นหลัง
         renderer.domElement.style.pointerEvents = 'auto'; 
-        
-        // บังคับ z-index ให้สูงกว่า video background (ที่มักเป็น -1 หรือ -2)
         renderer.domElement.style.zIndex = '10'; 
         renderer.domElement.style.position = 'absolute';
         renderer.domElement.style.top = '0';
@@ -240,9 +238,14 @@ export async function initAndStart(containerElement) {
   
   Utils.createLights(scene);
   
-  anchor = mindarThree.addAnchor(0);
+  // ✅ สร้าง 2 Anchors (สำหรับ Target 0 และ Target 1)
+  anchor0 = mindarThree.addAnchor(0); // Marker ตัวแรก
+  anchor1 = mindarThree.addAnchor(1); // Marker ตัวที่สอง (ถ้ามีในไฟล์ .mind)
+  
   contentGroup = new THREE.Group();
-  anchor.group.add(contentGroup); 
+  
+  // ใส่ contentGroup ไว้ที่ anchor0 เป็นค่าเริ่มต้น (เดี๋ยวตอนเจอ target มันจะย้ายไป scene เอง)
+  anchor0.group.add(contentGroup); 
 
   try { setNoScan(false); } catch(e){}
 
@@ -251,18 +254,18 @@ export async function initAndStart(containerElement) {
   lastCareer = 'Computer';
   if (careerActions()) careerActions().style.display = 'none';
 
-  // --- Event: Target Found ---
-  anchor.onTargetFound = async () => {
+  // --- Shared Event: Target Found (ใช้ร่วมกันทั้ง 2 Markers) ---
+  const onAnyTargetFound = async () => {
     isAnchorTracked = true;
     
     if (!isWorldMode) {
-        console.log("🎯 First Scan! Switching to World Camera...");
+        console.log("🎯 Target Found! Switching to World Camera...");
         isWorldMode = true;
 
         const sf = scanFrame();
         if(sf) sf.style.display = 'none';
 
-        // สร้างกล้องใหม่
+        // สร้างกล้องใหม่ (World Camera)
         const w = window.innerWidth;
         const h = window.innerHeight;
         worldCamera = new THREE.PerspectiveCamera(70, w / h, 0.1, 1000);
@@ -275,23 +278,20 @@ export async function initAndStart(containerElement) {
 
         activeCamera = worldCamera;
 
+        // ✅ ย้าย contentGroup ไปที่ Scene (World Coordinates) ทันทีที่เจอ
         scene.add(contentGroup);
         contentGroup.position.set(0, 0, 0);
         contentGroup.rotation.set(0, 0, 0);
         contentGroup.scale.set(1, 1, 1);
 
-        // 🔥🔥 FIX 2: เคลียร์ Controls เก่าก่อนสร้างใหม่ เพื่อกันบั๊ก 🔥🔥
         if (controls) controls.dispose();
 
-        // สร้าง Controls ใหม่ผูกกับ Canvas (renderer.domElement)
         controls = new OrbitControls(activeCamera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
         controls.enableZoom = true;
-        
-        // ปิด Pan (ไม่ให้ลากย้ายที่) แต่เปิด Rotate (ให้หมุนได้)
         controls.enablePan = false; 
-        controls.enableRotate = true; // ยืนยันว่าเปิด
+        controls.enableRotate = true; 
         
         controls.target.set(0, 0, 0);
         controls.update();
@@ -310,13 +310,16 @@ export async function initAndStart(containerElement) {
     }
   };
 
+  // ✅ ผูก Event ให้กับทั้ง 2 Anchors
+  anchor0.onTargetFound = onAnyTargetFound;
+  anchor1.onTargetFound = onAnyTargetFound;
+
   await mindarThree.start();
   
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
     
-    // อัปเดตการหมุน
     if (controls) controls.update();
 
     if (activeCamera) renderer.render(scene, activeCamera);
