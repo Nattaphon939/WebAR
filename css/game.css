@@ -1,3 +1,5 @@
+/* css/game.css */
+
 :root{
   --bg:#071017;
   --card-bg:#0f1720;
@@ -15,7 +17,7 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
   height:100%;
   object-fit:cover;
   z-index:0;
-  transform:scaleX(-1);
+  /* transform:scaleX(-1);  <-- ลบบรรทัดนี้ออกครับ เพื่อให้กล้องหันตามจริง */
   background:#000;
 }
 
@@ -54,16 +56,20 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
 .card-front{transform:rotateY(180deg);background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));display:flex;align-items:center;justify-content:center;padding:6px}
 .card-front img{width:82%;height:82%;object-fit:contain;filter:drop-shadow(0 6px 18px rgba(0,0,0,0.6))}
 
-/* matched state
-   IMPORTANT: include rotateY to keep card showing front, and scale for effect.
-   This must not override rotateY — so we explicitly set rotateY(180deg) here.
-*/
+/* ช่องล่องหนสำหรับจัด Layout ให้สมมาตร (เพิ่มตามที่คุยกันก่อนหน้า) */
+.card.hidden-slot {
+  visibility: hidden;
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+/* matched state */
 .card.matched .card-inner{
   transform: rotateY(180deg) scale(1.02);
   box-shadow:0 12px 30px rgba(0,255,255,0.08);
 }
-
-/* matched card styling (non-transform) */
 .card.matched{cursor:default;opacity:0.95}
 
 /* wrong feedback */
@@ -83,7 +89,7 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
 .start-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 .start-actions button{padding:10px 12px;border-radius:10px;border:none;background:var(--accent);color:#000;font-weight:700;cursor:pointer;font-size:14px}
 
-/* --- Score overlay + confetti + buttons --- */
+/* Score overlay */
 .score-overlay {
   position:fixed;
   inset:0;
@@ -109,13 +115,12 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
 .score-card h3 { margin: 0 0 6px 0; font-size:16px; color:#00131a; }
 .score-number { font-size:36px; letter-spacing:1px; margin-top:6px; color:#00131a; }
 
-/* score controls */
 .score-controls { display:flex;gap:10px;margin-top:12px;justify-content:center }
 .score-btn {
   padding:8px 12px;border-radius:10px;border:none;background:#00131a;color:var(--accent);font-weight:800;cursor:pointer;
 }
 
-/* confetti pieces */
+/* confetti */
 .confetti {
   position:fixed;
   width:10px;
@@ -134,26 +139,10 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
   60% { opacity:1 }
   100% { transform: translateY(120vh) rotate(600deg) translateX(var(--tx)); opacity:0.9 }
 }
-@keyframes confetti-sway {
-  0% { transform: translateX(0) rotate(0deg) }
-  50% { transform: translateX(var(--sx)) rotate(90deg) }
-  100% { transform: translateX(0) rotate(180deg) }
-}
 
-/* small sparkle on score */
 .score-pulse { animation: pulse 900ms cubic-bezier(.2,.9,.3,1) 1; }
 @keyframes pulse {
   0% { transform: scale(.9); opacity:0.6 }
   60% { transform: scale(1.08); opacity:1 }
   100% { transform: scale(1); opacity:1 }
-}
-/* --- เพิ่มต่อท้ายไฟล์ css/game.css --- */
-
-/* ช่องล่องหนสำหรับจัด Layout ให้สมมาตร */
-.card.hidden-slot {
-  visibility: hidden;      /* มองไม่เห็น */
-  pointer-events: none;    /* คลิกไม่ได้ */
-  background: transparent; /* ไม่มีสีพื้นหลัง */
-  border: none;
-  box-shadow: none;
 }
