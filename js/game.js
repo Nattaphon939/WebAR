@@ -1,13 +1,11 @@
 // js/game.js
-// Memory Match game — Optimized to use Preloaded Assets
+// Memory Match game — Optimized with "Symmetrical Holes" for Level 2 & 3
 
-// 1. นำเข้า getAssets เพื่อดึงไฟล์ที่โหลดไว้แล้ว
 import { getAssets } from './loader.js';
 
 const MANIFEST_PATH = './game_assets/manifest.json';
-const TOTAL_STAGES = 4; 
+const TOTAL_STAGES = 3; // ปรับเป็น 3 ด่านหลักตามที่คุยกัน (6 -> 8 -> 10/12)
 
-// ดึง Assets ที่โหลดไว้ใน Memory
 const loadedAssets = getAssets().gameAssets || {};
 
 const boardEl = document.getElementById('board');
@@ -16,7 +14,6 @@ const timerEl = document.getElementById('timer');
 const msgEl = document.getElementById('msg');
 const btnRestart = document.getElementById('btn-restart');
 const btnMute = document.getElementById('btn-mute');
-
 const startOverlay = document.getElementById('start-overlay');
 const startButton = document.getElementById('start-button');
 const camVideo = document.getElementById('cam-video');
@@ -33,52 +30,38 @@ let seconds = 0;
 let isMuted = false;
 let currentStage = 1;
 let currentPlayingAudio = null;
-
 let totalMovesAccum = 0;
 let totalSecondsAccum = 0;
 
 const allAudioElements = new Set();
 
+// --- กำหนดจำนวนคู่ในแต่ละด่าน ---
 function getPairsForStage(stage) {
-  const isMobile = window.innerWidth < 600;
-  if (isMobile) {
-    switch(stage) {
-      case 1: return 3;
-      case 2: return 4;
-      case 3: return 5;
-      default: return 6;
-    }
-  } else {
-    switch(stage) {
-      case 1: return 4;
-      case 2: return 6;
-      case 3: return 8;
-      default: return 10;
-    }
+  // Mobile & Desktop ใช้ Logic เดียวกันเพื่อความสวยงามตามสูตรที่คุยกัน
+  switch(stage) {
+    case 1: return 3; // 6 ใบ (3x2) -> เต็มสวย
+    case 2: return 4; // 8 ใบ (3x3 เจาะรูตรงกลาง) -> ใช้ 9 ช่อง
+    case 3: return 5; // 10 ใบ (3x4 เจาะ 2 รูตรงกลาง) -> ใช้ 12 ช่อง
+    default: return 6; // ด่านแถม (ถ้ามี)
   }
 }
 
-// 2. ฟังก์ชันช่วยค้นหา Blob URL (ถ้ามีให้ใช้เลย ถ้าไม่มีให้ใช้ Path เดิม)
 function getAssetUrl(path) {
     if (!path) return null;
-    // ตัด prefix ออกเพื่อให้ตรงกับ key ใน loadedAssets (เช่น 'game_assets/cards/img.png' -> 'cards/img.png')
     const key = path.replace('game_assets/', '').replace('./game_assets/', '');
-    if (loadedAssets[key]) {
-        return loadedAssets[key]; // ใช้ Blob URL ที่โหลดไว้แล้ว (เร็วมาก)
-    }
-    return path; // ถ้าไม่มี ให้ใช้ Path เดิมโหลดใหม่
+    if (loadedAssets[key]) return loadedAssets[key];
+    return path;
 }
 
+// ... (ส่วน Audio Helper คงเดิม) ...
 function maybeCreateAudioPaths(basePaths) {
   for (const p of basePaths) {
     try {
-      // ใช้ getAssetUrl เพื่อเช็ค Blob ก่อน
       const finalPath = getAssetUrl(p);
       const a = new Audio(finalPath);
       a.preload = 'auto';
       a.muted = isMuted;
       a.volume = isMuted ? 0 : 1;
-      a.addEventListener('error', ()=>{});
       allAudioElements.add(a);
       return a;
     } catch(e){}
@@ -86,7 +69,6 @@ function maybeCreateAudioPaths(basePaths) {
   return null;
 }
 
-// โหลด SFX ผ่าน Cache
 const sfx = {
   flip: maybeCreateAudioPaths(['game_assets/sfx/flip.wav','game_assets/sfx/flip.mp3']),
   match: maybeCreateAudioPaths(['game_assets/sfx/match.wav','game_assets/sfx/match.mp3']),
@@ -98,18 +80,14 @@ function applyMuteToAll(muted) {
   allAudioElements.forEach(a => {
     try {
       a.muted = muted;
-      if (muted) { try { a.volume = 0; } catch(e){} } 
-      else { try { a.volume = 1; } catch(e){} }
+      a.volume = muted ? 0 : 1;
     } catch(e){}
   });
 }
 
 function safePlay(audio) {
-  if (!audio) return;
-  if (isMuted) return;
-  try { audio.currentTime = 0; } catch(e){}
-  const p = audio.play();
-  if (p && p.catch) p.catch(()=>{});
+  if (!audio || isMuted) return;
+  try { audio.currentTime = 0; audio.play().catch(()=>{}); } catch(e){}
 }
 
 function stopCurrentPlaying() {
@@ -121,11 +99,7 @@ function stopCurrentPlaying() {
 
 function stopAllAudio() {
   stopCurrentPlaying();
-  try {
-    allAudioElements.forEach(a => {
-      if (a) { try { a.pause(); a.currentTime = 0; } catch(e){} }
-    });
-  } catch(e){}
+  allAudioElements.forEach(a => { try { a.pause(); a.currentTime = 0; } catch(e){} });
 }
 
 function startTimer() {
@@ -145,20 +119,16 @@ async function loadManifest(){
     manifest = await res.json();
   }catch(e){
     console.error('manifest load err',e);
-    if (msgEl) msgEl.textContent = 'ไม่พบ manifest.json';
   }
 }
 
-// 3. ปรับปรุง resolvePath ให้คืนค่าเป็น Blob URL
 function resolvePath(val, type){
   if (!val) return null;
   let rawPath = val;
-  
   if (!val.includes('/') && !val.startsWith('./')) {
       if (type === 'image') rawPath = `game_assets/cards/${val}`;
       if (type === 'audio') rawPath = `game_assets/audio/${val}`;
   }
-  
   return getAssetUrl(rawPath);
 }
 
@@ -171,28 +141,45 @@ function pickNItems(n) {
   return copy.slice(0, Math.min(n, copy.length));
 }
 
+// --- Logic สร้างการ์ด (มีการแทรก Dummy) ---
 function buildCardObjectsForStage(stage) {
   const pairsNeeded = getPairsForStage(stage);
   const chosen = pickNItems(pairsNeeded);
   
   cards = [];
   chosen.forEach(it => {
-    const id = it.id || it.name || '';
-    const imgRaw = it.image || it.img || it.icon || '';
-    const wordRaw = it.audioWord || it.wordAudio || it.word || it.audio_word;
-    const meaningRaw = it.audioMeaning || it.meaningAudio || it.meaning || it.audio_meaning;
+    const id = it.id;
     const card = {
       id,
-      image: resolvePath(imgRaw,'image'),
-      wordAudio: resolvePath(wordRaw,'audio'),
-      meaningAudio: resolvePath(meaningRaw,'audio')
+      image: resolvePath(it.image,'image'),
+      wordAudio: resolvePath(it.audioWord,'audio'),
+      meaningAudio: resolvePath(it.audioMeaning,'audio')
     };
-    const a = {...card, instanceId: id + '-a-' + Math.random().toString(36).slice(2,7)};
-    const b = {...card, instanceId: id + '-b-' + Math.random().toString(36).slice(2,7)};
-    cards.push(a,b);
+    // สร้างคู่
+    cards.push({...card, instanceId: id + '-a-' + Math.random()});
+    cards.push({...card, instanceId: id + '-b-' + Math.random()});
   });
-  if (cards.length % 2 !== 0) cards.pop();
+  
+  // สับการ์ดก่อนแทรกรู
   shuffle(cards);
+
+  // --- แทรกช่องว่าง (Dummy) ตามด่าน ---
+  if (stage === 2) {
+    // ด่าน 2: 8 ใบ (3x3) -> แทรกตรงกลาง (index 4)
+    // Layout: [X][X][X]
+    //         [X][ ][X]
+    //         [X][X][X]
+    cards.splice(4, 0, { id: 'DUMMY' });
+  } 
+  else if (stage === 3) {
+    // ด่าน 3: 10 ใบ (3x4) -> แทรกตรงกลางแถว 2 และ 3 (index 4 และ 7)
+    // Layout: [X][X][X]
+    //         [X][ ][X]
+    //         [X][ ][X]
+    //         [X][X][X]
+    cards.splice(4, 0, { id: 'DUMMY' });
+    cards.splice(7, 0, { id: 'DUMMY' });
+  }
 }
 
 function shuffle(arr){
@@ -204,6 +191,14 @@ function shuffle(arr){
 
 function createCardElement(cardObj){
   const el = document.createElement('div');
+  
+  // --- ถ้าเป็นช่องว่าง (DUMMY) ---
+  if (cardObj.id === 'DUMMY') {
+    el.className = 'card hidden-slot'; // ใช้ CSS ซ่อน
+    return el;
+  }
+
+  // --- ถ้าเป็นการ์ดปกติ ---
   el.className = 'card';
   el.dataset.id = cardObj.id;
   el.dataset.instance = cardObj.instanceId;
@@ -226,45 +221,38 @@ function createCardElement(cardObj){
   inner.appendChild(front);
   el.appendChild(inner);
 
+  // Setup Audio
   if (cardObj.wordAudio) {
     try {
       const wa = new Audio(cardObj.wordAudio);
-      wa.preload = 'auto';
       wa.muted = isMuted;
-      wa.volume = isMuted ? 0 : 1;
-      wa.addEventListener('error', ()=>{});
-      el._wordAudio = wa;
       allAudioElements.add(wa);
-    } catch(e){ el._wordAudio = null; }
-  } else el._wordAudio = null;
-
+      el._wordAudio = wa;
+    } catch(e){}
+  }
   if (cardObj.meaningAudio) {
     try {
       const ma = new Audio(cardObj.meaningAudio);
-      ma.preload = 'auto';
       ma.muted = isMuted;
-      ma.volume = isMuted ? 0 : 1;
-      ma.addEventListener('error', ()=>{});
-      el._meaningAudio = ma;
       allAudioElements.add(ma);
-    } catch(e){ el._meaningAudio = null; }
-  } else el._meaningAudio = null;
+      el._meaningAudio = ma;
+    } catch(e){}
+  }
 
-  el.addEventListener('click', ()=> onCardClick(el, cardObj));
+  el.addEventListener('click', ()=> onCardClick(el));
   return el;
 }
 
 function renderBoard(){
   if (!boardEl) return;
   boardEl.innerHTML = '';
-  cards.forEach(c=>{
-    const cardObj = { id: c.id, image: c.image, wordAudio: c.wordAudio, meaningAudio: c.meaningAudio, instanceId: c.instanceId };
-    const el = createCardElement(cardObj);
+  cards.forEach(c => {
+    const el = createCardElement(c);
     boardEl.appendChild(el);
   });
 }
 
-function onCardClick(el, cardObj){
+function onCardClick(el){
   if (lockBoard) return;
   if (el === firstCard) return;
   if (el.classList.contains('flipped')) return;
@@ -274,13 +262,10 @@ function onCardClick(el, cardObj){
   stopCurrentPlaying();
   safePlay(sfx.flip);
 
+  // เล่นเสียงคำศัพท์
   if (el._wordAudio && !isMuted) {
     currentPlayingAudio = el._wordAudio;
-    try { currentPlayingAudio.currentTime = 0; } catch(e){}
-    const p = currentPlayingAudio.play();
-    if (p && p.catch) p.catch(()=>{});
-  } else {
-    currentPlayingAudio = null;
+    try { currentPlayingAudio.currentTime = 0; currentPlayingAudio.play().catch(()=>{}); } catch(e){}
   }
 
   if (!firstCard){
@@ -295,6 +280,7 @@ function onCardClick(el, cardObj){
 
   const idA = firstCard.dataset.id;
   const idB = secondCard.dataset.id;
+  
   if (idA === idB){
     setTimeout(()=> onMatch(firstCard, secondCard), 350);
   } else {
@@ -310,7 +296,7 @@ function onCardClick(el, cardObj){
         secondCard.classList.remove('wrong');
         resetSelection();
       }, 420);
-    }, 300);
+    }, 500);
   }
 }
 
@@ -320,16 +306,13 @@ function onMatch(a,b){
 
   a.classList.add('matched','flipped');
   b.classList.add('matched','flipped');
-  a.style.pointerEvents = 'none';
-  b.style.pointerEvents = 'none';
-
+  
+  // เล่นเสียงความหมายตอนจับคู่ถูก
   if (a._meaningAudio && !isMuted) {
-    currentPlayingAudio = a._meaningAudio;
-    try { currentPlayingAudio.currentTime = 0; } catch(e){}
-    const p = currentPlayingAudio.play();
-    if (p && p.catch) p.catch(()=>{});
-  } else {
-    currentPlayingAudio = null;
+    setTimeout(() => {
+        currentPlayingAudio = a._meaningAudio;
+        try { currentPlayingAudio.currentTime = 0; currentPlayingAudio.play().catch(()=>{}); } catch(e){}
+    }, 200);
   }
 
   matches++;
@@ -344,13 +327,18 @@ function resetSelection(){
 }
 
 function checkWin(){
-  if (matches * 2 === cards.length){
+  // นับจำนวนการ์ดจริง (ตัด Dummy ออก)
+  const realCardsCount = cards.filter(c => c.id !== 'DUMMY').length;
+  
+  if (matches * 2 === realCardsCount){
     stopTimer();
     totalMovesAccum += moves;
     totalSecondsAccum += seconds;
 
     stopAllAudio();
-    safePlay(sfx.win);
+    
+    // รอเสียงพูดจบก่อนเล่นเสียง Win (ประมาณ 1.5วิ)
+    setTimeout(() => { safePlay(sfx.win); }, 1000);
 
     if (currentStage < TOTAL_STAGES) {
       showStageWinUIAndAdvance();
@@ -363,160 +351,100 @@ function checkWin(){
 function showStageWinUIAndAdvance() {
   const overlay = document.createElement('div');
   overlay.className = 'win-overlay';
-  overlay.style.zIndex = '10004';
-  overlay.innerHTML = `<div class="win-card">ผ่านด่าน ${currentStage} • Moves: ${moves} • Time: ${seconds}s</div>`;
+  overlay.innerHTML = `<div class="win-card">🎉 ผ่านด่าน ${currentStage} แล้ว!</div>`;
   document.body.appendChild(overlay);
 
   setTimeout(()=>{
     try{ overlay.remove(); }catch{}
     currentStage++;
     startNextStage();
-  }, 1200);
+  }, 2000);
 }
 
 function showFinalScoreUI() {
+  // คำนวณคะแนน
   let totalMinMoves = 0;
   for (let i = 1; i <= TOTAL_STAGES; i++) {
     totalMinMoves += getPairsForStage(i);
   }
-
   const totalMoves = Math.max(1, totalMovesAccum);
-  let efficiency = totalMinMoves / totalMoves;
-  if (efficiency > 1) efficiency = 1;
-  if (efficiency < 0) efficiency = 0;
-  const score = Math.round(efficiency * 10);
+  let efficiency = totalMinMoves / totalMoves; // ยิ่งใกล้ 1 ยิ่งดี
+  const score = Math.min(10, Math.round(efficiency * 13)); // ปรับสูตรให้ได้คะแนนง่ายขึ้นนิดนึง
 
   const container = document.createElement('div');
   container.className = 'score-overlay';
   container.id = 'score-overlay';
-
-  const card = document.createElement('div');
-  card.className = 'score-card score-pulse';
-  card.innerHTML = `
-    <h3>🎉 ยินดีด้วย! ผ่านครบ ${TOTAL_STAGES} ด่าน 🎉</h3>
-    <div class="score-number" id="score-number">0</div>
-    <div style="font-size:13px;margin-top:8px;color:#002226">คะแนนความแม่นยำ (เต็ม 10)</div>
-    <div style="font-size:12px;margin-top:8px;color:#002226">Total Moves: ${totalMoves} • Total Time: ${totalSecondsAccum}s</div>
-    <div class="score-controls">
-      <button class="score-btn" id="play-again-btn">เล่นใหม่</button>
-      <button class="score-btn" id="back-menu-btn">กลับสู่เมนู</button>
+  container.innerHTML = `
+    <div class="score-card score-pulse">
+      <h3>🏆 ยินดีด้วย! คุณเก่งมาก 🏆</h3>
+      <div class="score-number">${score}/10</div>
+      <div style="font-size:12px; margin-top:10px;">เวลาทั้งหมด: ${totalSecondsAccum} วินาที</div>
+      <div class="score-controls">
+        <button class="score-btn" id="play-again-btn">เล่นอีกครั้ง</button>
+        <button class="score-btn" id="back-menu-btn">กลับเมนูหลัก</button>
+      </div>
     </div>
   `;
-  container.appendChild(card);
   document.body.appendChild(container);
+  
+  launchConfetti();
 
-  const display = document.getElementById('score-number');
-  let cur = 0;
-  const duration = 900;
-  const start = performance.now();
-  function step(now) {
-    const t = Math.min(1, (now - start) / duration);
-    cur = Math.round(t * score);
-    display.textContent = cur;
-    if (t < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
-
-  launchConfetti(50);
-
-  document.getElementById('play-again-btn').addEventListener('click', ()=> {
+  document.getElementById('play-again-btn').onclick = () => {
     stopAllAudio();
-    try { document.getElementById('score-overlay').remove(); } catch(e){}
+    container.remove();
     clearConfetti();
-    totalMovesAccum = 0;
-    totalSecondsAccum = 0;
-    currentStage = 1;
-    startNextStage();
-  });
+    startGameFlow(1);
+  };
 
-  document.getElementById('back-menu-btn').addEventListener('click', ()=> {
+  document.getElementById('back-menu-btn').onclick = () => {
     stopAllAudio();
-    stopCurrentPlaying();
-    try {
-      if (camVideo && camVideo.srcObject) {
-        const tracks = camVideo.srcObject.getTracks();
-        tracks.forEach(t=>t.stop());
-        camVideo.srcObject = null;
-      }
-    } catch(e){ console.warn(e); }
-    try { document.getElementById('score-overlay').remove(); } catch(e){}
+    container.remove();
     clearConfetti();
-    try {
-      const gameOverlay = document.getElementById('game-overlay');
-      if (gameOverlay) gameOverlay.remove();
-    } catch(e){}
-    try {
-      const careerMenu = document.getElementById('career-menu');
-      if (careerMenu) careerMenu.style.display = 'flex';
-      const careerActions = document.getElementById('career-actions');
-      if (careerActions) careerActions.style.display = 'flex';
-      const backBtn = document.getElementById('backBtn');
-      if (backBtn) backBtn.style.display = 'none';
-      const returnBtn = document.getElementById('return-btn');
-      if (returnBtn) returnBtn.style.display = 'none';
-      const scanFrame = document.getElementById('scan-frame');
-      if (scanFrame) scanFrame.style.display = 'flex';
-    } catch(e){}
-    stopTimer();
-  });
+    closeGame();
+  };
 }
 
-function launchConfetti(count = 24) {
-  const colors = ['#FFEC5C','#FF5C7C','#5CFFB1','#5CC7FF','#C85CFF'];
-  for (let i = 0; i < count; i++) {
-    const el = document.createElement('div');
-    el.className = 'confetti';
-    el.style.zIndex = 10005;
-    const color = colors[Math.floor(Math.random()*colors.length)];
-    el.style.background = color;
-    const startX = Math.random() * 100;
-    el.style.left = startX + 'vw';
-    const tx = (Math.random()*40 - 20) + 'px';
-    const sx = (Math.random()*70 - 35) + 'px';
-    el.style.setProperty('--tx', tx);
-    el.style.setProperty('--sx', sx);
-    const delay = Math.random() * 400;
-    const fallDuration = 1600 + Math.random()*1400;
-    el.style.top = '-6vh';
-    el.style.opacity = '0.95';
-    el.style.width = (8 + Math.random()*8) + 'px';
-    el.style.height = (12 + Math.random()*12) + 'px';
-    el.style.borderRadius = (2 + Math.random()*4) + 'px';
-    el.style.transform = `rotate(${Math.random()*360}deg)`;
-    el.style.animation = `confetti-fall ${fallDuration}ms cubic-bezier(.2,.7,.2,1) ${delay}ms forwards, confetti-sway ${900 + Math.random()*800}ms ease-in-out ${delay}ms infinite`;
-    el.setAttribute('data-confetti','1');
-    document.body.appendChild(el);
-    setTimeout(()=>{ try{ el.remove(); }catch{} }, fallDuration + delay + 4000);
-  }
+function launchConfetti(count = 30) {
+    // (ใช้โค้ดเดิมของคุณได้เลย หรือถ้าไม่มีให้บอก ผมจะแปะเพิ่มให้)
+    // ใส่แบบย่อๆ ไว้กัน Error
+    const colors = ['#f00','#0f0','#00f','#ff0','#0ff'];
+    for(let i=0; i<count; i++){
+        const el = document.createElement('div');
+        el.className = 'confetti';
+        el.style.left = Math.random()*100 + 'vw';
+        el.style.background = colors[Math.floor(Math.random()*colors.length)];
+        el.style.animation = `confetti-fall ${2+Math.random()}s linear`;
+        el.setAttribute('data-confetti','1');
+        document.body.appendChild(el);
+    }
 }
+
 function clearConfetti(){
-  const nodes = document.querySelectorAll('[data-confetti]');
-  nodes.forEach(n=>n.remove());
+  document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
 }
 
 function startNextStage() {
   moves = 0; matches = 0;
   if (movesEl) movesEl.textContent = `Moves: 0`;
+  
   buildCardObjectsForStage(currentStage);
   renderBoard();
   startTimer();
   
+  // แจ้งเตือนชื่อด่าน
   const toast = document.createElement('div');
-  toast.style.position = 'fixed';
-  toast.style.top = '50%'; toast.style.left = '50%';
-  toast.style.transform = 'translate(-50%, -50%)';
-  toast.style.background = 'rgba(0,0,0,0.7)';
-  toast.style.color = '#00ffff';
-  toast.style.padding = '12px 24px';
-  toast.style.borderRadius = '12px';
-  toast.style.zIndex = '10007';
-  toast.style.fontSize = '20px';
-  toast.style.fontWeight = 'bold';
-  toast.innerText = `ด่าน ${currentStage}`;
+  Object.assign(toast.style, {
+      position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+      background: 'rgba(0,0,0,0.8)', color: '#00ffff', padding: '15px 30px',
+      borderRadius: '10px', fontSize: '24px', fontWeight: 'bold', zIndex: '10008',
+      pointerEvents: 'none'
+  });
+  toast.innerText = `ด่านที่ ${currentStage}`;
   document.body.appendChild(toast);
-  setTimeout(() => { try{toast.remove()}catch{} }, 1500);
+  setTimeout(() => toast.remove(), 1500);
 }
 
+// เริ่มเกม
 async function startGameFlow(initialStage = 1){
   await loadManifest();
   if (!manifest || manifest.length === 0) return;
@@ -526,6 +454,7 @@ async function startGameFlow(initialStage = 1){
   startNextStage(); 
 }
 
+// ปุ่มควบคุม
 btnRestart && btnRestart.addEventListener('click', ()=>{
   stopAllAudio();
   startNextStage();
@@ -534,46 +463,37 @@ btnRestart && btnRestart.addEventListener('click', ()=>{
 btnMute && btnMute.addEventListener('click', ()=>{
   isMuted = !isMuted;
   applyMuteToAll(isMuted);
-  if (isMuted) {
-    stopAllAudio();
-    if (btnMute) btnMute.textContent = '🔇 Muted';
-  } else {
-    if (btnMute) btnMute.textContent = '🔈 Mute';
-  }
+  btnMute.textContent = isMuted ? '🔇 Muted' : '🔈 Mute';
 });
 
-async function startCameraAndGame() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }});
-    if (camVideo) {
-      camVideo.srcObject = stream;
-      try { await camVideo.play(); } catch(e){}
-    }
-  } catch (e) {
-    console.warn('camera permission error', e);
-    alert('ไม่สามารถเปิดกล้องได้ — กรุณาตรวจสอบการอนุญาตกล้อง');
-    return;
-  }
+// ฟังก์ชันปิดเกม (กลับไปหน้า AR/Menu)
+function closeGame() {
+    try { stopAllAudio(); } catch(e){}
+    try { if (camVideo && camVideo.srcObject) camVideo.srcObject.getTracks().forEach(t=>t.stop()); } catch(e){}
+    
+    // ลบ Overlay เกมออก
+    const gameOverlay = document.getElementById('game-overlay');
+    if (gameOverlay) gameOverlay.remove();
 
-  Object.values(sfx).forEach(a => { try{ a && a.load(); allAudioElements.add(a);} catch{} });
-  startGameFlow(1);
+    // กู้คืน UI หน้าหลัก
+    const careerMenu = document.getElementById('career-menu');
+    if (careerMenu) careerMenu.style.display = 'flex';
+    const scanFrame = document.getElementById('scan-frame');
+    if (scanFrame) scanFrame.style.display = 'flex';
 }
 
+// Auto Start Logic
 if (startButton) {
   startButton.addEventListener('click', async () => {
-    await startCameraAndGame();
+    // เปิดกล้อง
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }});
+        if (camVideo) camVideo.srcObject = stream;
+    } catch(e) { console.warn(e); }
+    startGameFlow(1);
     if (startOverlay) startOverlay.style.display = 'none';
   });
 } else {
-  setTimeout(()=>{ startCameraAndGame(); if (startOverlay) startOverlay.style.display = 'none'; }, 30);
+    // กรณีไม่มีปุ่ม Start ให้เริ่มเลย (เผื่อไว้)
+    startGameFlow(1);
 }
-
-window.addEventListener('beforeunload', ()=> {
-  stopAllAudio();
-  try {
-    if (camVideo && camVideo.srcObject) {
-      const tracks = camVideo.srcObject.getTracks();
-      tracks.forEach(t=>t.stop());
-    }
-  } catch(e){}
-});

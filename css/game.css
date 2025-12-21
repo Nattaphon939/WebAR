@@ -147,3 +147,13 @@ html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(
   60% { transform: scale(1.08); opacity:1 }
   100% { transform: scale(1); opacity:1 }
 }
+/* --- เพิ่มต่อท้ายไฟล์ css/game.css --- */
+
+/* ช่องล่องหนสำหรับจัด Layout ให้สมมาตร */
+.card.hidden-slot {
+  visibility: hidden;      /* มองไม่เห็น */
+  pointer-events: none;    /* คลิกไม่ได้ */
+  background: transparent; /* ไม่มีสีพื้นหลัง */
+  border: none;
+  box-shadow: none;
+}
