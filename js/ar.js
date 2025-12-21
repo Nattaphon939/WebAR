@@ -1,5 +1,5 @@
 // /WEB/js/ar.js
-// Final Fixed: Enable Touch Rotation (Pointer Events) & Support Multiple Markers (0 & 1)
+// Final Fixed: Symmetrical Layout (+/- 0.25) & CSS/JS Sync
 
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
@@ -15,7 +15,7 @@ let activeCamera = null;
 let worldCamera = null;  
 let headLight = null;    
 
-// แก้ไข: เปลี่ยนจาก anchor เดียว เป็นรองรับหลาย anchor
+// anchors for multiple targets
 let anchor0, anchor1; 
 let contentGroup = null; 
 let gltfModel = null, videoElem = null, videoMesh = null;
@@ -120,6 +120,7 @@ function attachContentToAnchor(gltf, video) {
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
     gltfModel.scale.set(0.7, 0.7, 0.7);
+    // ตั้งค่าเริ่มต้น (เดี๋ยวจะถูกแก้ใน videoElem.onloadedmetadata ถ้ามีวิดีโอ)
     gltfModel.position.set(-0.25, -0.45, 0.1); 
     gltfModel.visible = true; 
     if (contentGroup) contentGroup.add(gltfModel);
@@ -163,14 +164,18 @@ function attachContentToAnchor(gltf, video) {
         const width = 0.6; const height = width / asp;
         if (videoMesh.geometry) videoMesh.geometry.dispose();
         videoMesh.geometry = new THREE.PlaneGeometry(width, height);
-        videoMesh.position.set(0.1, 0, 0);
+        
+        // ✅ ปรับตำแหน่ง VIDEO: ให้ห่างจากตรงกลางไปทางขวา 0.25
+        videoMesh.position.set(0.25, 0, 0);
 
         if (gltfModel) {
             gltfModel.scale.set(0.7, 0.7, 0.7);
             gltfModel.rotation.set(0, 0.15, 0); 
             gltfModel.updateMatrixWorld(true);
             
-            const targetX = -0.35; 
+            // ✅ ปรับตำแหน่ง MODEL: ให้ห่างจากตรงกลางไปทางซ้าย -0.25 (สมมาตรกัน)
+            const targetX = -0.25; 
+            
             const videoBottom = -height / 2;
             gltfModel.position.set(0, 0, 0); gltfModel.updateMatrixWorld(true);
             const box = new THREE.Box3().setFromObject(gltfModel);
@@ -206,7 +211,6 @@ async function ensureContentForCareer(career) {
 // --- Main Init ---
 
 export async function initAndStart(containerElement) {
-  // ✅ ใช้ marker.mind ที่คุณต้องรวมรูปมาแล้ว (มีทั้ง target 0 และ 1 ในไฟล์เดียว)
   const markerSrc = (assets['Computer'] && assets['Computer'].markerBlobUrl) ? assets['Computer'].markerBlobUrl : `${JOB_ROOT}/Computer/marker.mind`;
   
   mindarThree = new MindARThree({
@@ -238,13 +242,10 @@ export async function initAndStart(containerElement) {
   
   Utils.createLights(scene);
   
-  // ✅ สร้าง 2 Anchors (สำหรับ Target 0 และ Target 1)
-  anchor0 = mindarThree.addAnchor(0); // Marker ตัวแรก
-  anchor1 = mindarThree.addAnchor(1); // Marker ตัวที่สอง (ถ้ามีในไฟล์ .mind)
+  anchor0 = mindarThree.addAnchor(0); 
+  anchor1 = mindarThree.addAnchor(1);
   
   contentGroup = new THREE.Group();
-  
-  // ใส่ contentGroup ไว้ที่ anchor0 เป็นค่าเริ่มต้น (เดี๋ยวตอนเจอ target มันจะย้ายไป scene เอง)
   anchor0.group.add(contentGroup); 
 
   try { setNoScan(false); } catch(e){}
@@ -254,7 +255,7 @@ export async function initAndStart(containerElement) {
   lastCareer = 'Computer';
   if (careerActions()) careerActions().style.display = 'none';
 
-  // --- Shared Event: Target Found (ใช้ร่วมกันทั้ง 2 Markers) ---
+  // --- Shared Event: Target Found ---
   const onAnyTargetFound = async () => {
     isAnchorTracked = true;
     
@@ -265,7 +266,7 @@ export async function initAndStart(containerElement) {
         const sf = scanFrame();
         if(sf) sf.style.display = 'none';
 
-        // สร้างกล้องใหม่ (World Camera)
+        // 1. Prepare World Camera Environment
         const w = window.innerWidth;
         const h = window.innerHeight;
         worldCamera = new THREE.PerspectiveCamera(70, w / h, 0.1, 1000);
@@ -278,24 +279,6 @@ export async function initAndStart(containerElement) {
 
         activeCamera = worldCamera;
 
-        // ✅ ย้าย contentGroup ไปที่ Scene (World Coordinates) ทันทีที่เจอ
-        scene.add(contentGroup);
-        contentGroup.position.set(0, 0, 0);
-        contentGroup.rotation.set(0, 0, 0);
-        contentGroup.scale.set(1, 1, 1);
-
-        if (controls) controls.dispose();
-
-        controls = new OrbitControls(activeCamera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.enableZoom = true;
-        controls.enablePan = false; 
-        controls.enableRotate = true; 
-        
-        controls.target.set(0, 0, 0);
-        controls.update();
-
         window.addEventListener('resize', () => {
              if(activeCamera === worldCamera) {
                  const newW = window.innerWidth;
@@ -306,11 +289,28 @@ export async function initAndStart(containerElement) {
              }
         });
 
-        startPlaybackSequence();
+        // 2. SHOW GESTURE GUIDE FIRST (Wait for 8 seconds)
+        const guide = document.getElementById('gesture-guide');
+        if (guide) {
+            guide.style.display = 'flex';
+            guide.style.opacity = '1';
+            
+            // รอ 8 วินาทีให้ CSS เล่นจบ 1 รอบ (4วิ หมุน + 4วิ ซูม)
+            setTimeout(() => {
+                guide.style.transition = 'opacity 1s ease'; // ค่อยๆ จางหาย
+                guide.style.opacity = '0';
+                
+                setTimeout(() => { guide.style.display = 'none'; }, 1000); 
+
+                // --- SHOW CONTENT (Model/Video) ---
+                showContentInWorldMode();
+            }, 8000); 
+        } else {
+            showContentInWorldMode();
+        }
     }
   };
 
-  // ✅ ผูก Event ให้กับทั้ง 2 Anchors
   anchor0.onTargetFound = onAnyTargetFound;
   anchor1.onTargetFound = onAnyTargetFound;
 
@@ -324,6 +324,27 @@ export async function initAndStart(containerElement) {
 
     if (activeCamera) renderer.render(scene, activeCamera);
   });
+}
+
+function showContentInWorldMode() {
+    scene.add(contentGroup);
+    contentGroup.position.set(0, 0, 0);
+    contentGroup.rotation.set(0, 0, 0);
+    contentGroup.scale.set(1, 1, 1);
+
+    if (controls) controls.dispose();
+
+    controls = new OrbitControls(activeCamera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.enableZoom = true;
+    controls.enablePan = false; 
+    controls.enableRotate = true; 
+    
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    startPlaybackSequence();
 }
 
 async function startPlaybackSequence() {
