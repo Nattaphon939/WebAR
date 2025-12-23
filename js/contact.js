@@ -1,5 +1,5 @@
 // /WEB/js/contact.js
-import * as AR from './ar.js'; // ✅ Import AR
+import * as AR from './ar.js'; 
 
 const FACEBOOK_URL = 'https://www.facebook.com/ComputerEngineering.rmutl';
 const CONTACT_VIDEO_PATH = 'Contact/Contact.mp4';
@@ -9,15 +9,13 @@ export function initContact() {
   if (!contactBtn) return;
 
   contactBtn.addEventListener('click', () => {
-    // ✅ 1. ลบคอนเทนต์ AR เดิมออกทันที
     try { AR.resetToIdle(); } catch(e){}
     AR.setNoScan(true);
 
-    // 2. ซ่อนเมนู
     const careerMenu = document.getElementById('career-menu');
     if (careerMenu) careerMenu.style.display = 'none';
-    const backBtn = document.getElementById('backBtn');
-    if (backBtn) backBtn.style.display = 'none';
+    const homeBtn = document.getElementById('homeBtn');
+    if (homeBtn) homeBtn.style.display = 'none';
 
     // Overlay พื้นหลัง
     const overlay = document.createElement('div');
@@ -66,15 +64,19 @@ export function initContact() {
     contentContainer.appendChild(fbLink);
     overlay.appendChild(contentContainer);
 
-    // Close Button
+    // ✅ เปลี่ยนจากปุ่ม X เป็นปุ่ม Home (เมนูหลัก)
     const closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '✕';
+    closeBtn.innerHTML = '🏠 เมนูหลัก';
     Object.assign(closeBtn.style, {
-      position: 'absolute', top: '20px', right: '20px',
-      width: '40px', height: '40px', borderRadius: '50%',
-      border: 'none', background: 'rgba(255,255,255,0.2)', color: '#fff',
-      fontSize: '20px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+      position: 'absolute', top: '12px', left: '12px', // ย้ายมาซ้ายบน
+      padding: '8px 12px', borderRadius: '8px',
+      border: '1px solid rgba(255, 255, 255, 0.06)', 
+      background: 'rgba(0, 0, 0, 0.5)', 
+      color: '#00ffff', // Accent color
+      fontSize: '14px', fontWeight: 'bold', 
+      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
     });
+    
     closeBtn.onclick = () => {
       overlay.remove();
       // กลับสู่หน้า Menu

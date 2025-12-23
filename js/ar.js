@@ -1,5 +1,5 @@
 // /WEB/js/ar.js
-// Final Fixed: Symmetrical Layout (+/- 0.25) & CSS/JS Sync
+// Final Fixed: Merged Buttons (No separate careerActions)
 
 import * as THREE from 'three';
 import { MindARThree } from 'mindar-image-three';
@@ -15,7 +15,7 @@ let activeCamera = null;
 let worldCamera = null;  
 let headLight = null;    
 
-// anchors for multiple targets
+// anchors
 let anchor0, anchor1; 
 let contentGroup = null; 
 let gltfModel = null, videoElem = null, videoMesh = null;
@@ -36,8 +36,7 @@ let isAnchorTracked = false;
 // --- DOM References ---
 const scanFrame = () => document.getElementById('scan-frame');
 const careerMenu = () => document.getElementById('career-menu');
-const careerActions = () => document.getElementById('career-actions');
-const backBtn = () => document.getElementById('backBtn');
+const homeBtn = () => document.getElementById('homeBtn'); 
 
 // --- Exported Functions ---
 export function setAutoPlayEnabled(flag) { autoPlayEnabled = !!flag; }
@@ -52,6 +51,9 @@ export function setNoScan(flag) {
     if (!isWorldMode) {
         const sf = scanFrame();
         if (sf) sf.style.display = 'flex';
+        
+        // 🔒 SAFETY: ถ้ากลับมาหน้าสแกน ต้องซ่อนปุ่ม Home เสมอ!
+        if (homeBtn()) homeBtn().style.display = 'none';
     }
   }
 }
@@ -67,11 +69,11 @@ function checkBothFinished() {
   playingCareer = null;
   isPausedByBack = false;
   
-  if (lastCareer && ['AI','Cloud','Data_Center','Network'].includes(lastCareer)) {
-    if (careerActions()) careerActions().style.display = 'flex';
-  }
+  // ✅ แสดง Menu (ซึ่งมีปุ่มทุกอย่างรวมอยู่แล้ว)
   if (careerMenu()) careerMenu().style.display = 'flex';
-  if (backBtn()) backBtn().style.display = 'none';
+  
+  // จบคอนเทนต์ -> เข้าเมนู -> ซ่อนปุ่ม Home
+  if (homeBtn()) homeBtn().style.display = 'none'; 
   
   try { document.dispatchEvent(new CustomEvent('career-ready', { detail: { career: lastCareer } })); } catch(e){}
 }
@@ -120,7 +122,6 @@ function attachContentToAnchor(gltf, video) {
     try { gltfModel.userData = gltfModel.userData || {}; gltfModel.userData.sourceCareer = playingCareer || 'unknown'; } catch(e){}
     
     gltfModel.scale.set(0.7, 0.7, 0.7);
-    // ตั้งค่าเริ่มต้น (เดี๋ยวจะถูกแก้ใน videoElem.onloadedmetadata ถ้ามีวิดีโอ)
     gltfModel.position.set(-0.25, -0.45, 0.1); 
     gltfModel.visible = true; 
     if (contentGroup) contentGroup.add(gltfModel);
@@ -165,7 +166,6 @@ function attachContentToAnchor(gltf, video) {
         if (videoMesh.geometry) videoMesh.geometry.dispose();
         videoMesh.geometry = new THREE.PlaneGeometry(width, height);
         
-        // ✅ ปรับตำแหน่ง VIDEO: ให้ห่างจากตรงกลางไปทางขวา 0.25
         videoMesh.position.set(0.25, 0, 0);
 
         if (gltfModel) {
@@ -173,9 +173,7 @@ function attachContentToAnchor(gltf, video) {
             gltfModel.rotation.set(0, 0.15, 0); 
             gltfModel.updateMatrixWorld(true);
             
-            // ✅ ปรับตำแหน่ง MODEL: ให้ห่างจากตรงกลางไปทางซ้าย -0.25 (สมมาตรกัน)
             const targetX = -0.25; 
-            
             const videoBottom = -height / 2;
             gltfModel.position.set(0, 0, 0); gltfModel.updateMatrixWorld(true);
             const box = new THREE.Box3().setFromObject(gltfModel);
@@ -250,11 +248,13 @@ export async function initAndStart(containerElement) {
 
   try { setNoScan(false); } catch(e){}
 
+  // 🔒 SAFETY: เริ่มต้นมาซ่อนปุ่ม Home ไว้ก่อนเสมอ
+  if (homeBtn()) homeBtn().style.display = 'none';
+
   await ensureContentForCareer('Computer');
   playingCareer = 'Computer';
   lastCareer = 'Computer';
-  if (careerActions()) careerActions().style.display = 'none';
-
+  
   // --- Shared Event: Target Found ---
   const onAnyTargetFound = async () => {
     isAnchorTracked = true;
@@ -266,7 +266,6 @@ export async function initAndStart(containerElement) {
         const sf = scanFrame();
         if(sf) sf.style.display = 'none';
 
-        // 1. Prepare World Camera Environment
         const w = window.innerWidth;
         const h = window.innerHeight;
         worldCamera = new THREE.PerspectiveCamera(70, w / h, 0.1, 1000);
@@ -295,18 +294,24 @@ export async function initAndStart(containerElement) {
             guide.style.display = 'flex';
             guide.style.opacity = '1';
             
-            // รอ 8 วินาทีให้ CSS เล่นจบ 1 รอบ (4วิ หมุน + 4วิ ซูม)
+            // รอ 8 วินาทีให้ CSS เล่นจบ
             setTimeout(() => {
-                guide.style.transition = 'opacity 1s ease'; // ค่อยๆ จางหาย
+                guide.style.transition = 'opacity 1s ease'; 
                 guide.style.opacity = '0';
                 
                 setTimeout(() => { guide.style.display = 'none'; }, 1000); 
 
-                // --- SHOW CONTENT (Model/Video) ---
+                // --- เริ่มแสดงคอนเทนต์ ---
                 showContentInWorldMode();
+
+                // ✅ เงื่อนไขที่ 1: แสดงปุ่มเมนูหลักหลังจากสาธิตจบ
+                if (homeBtn()) homeBtn().style.display = 'flex'; 
+
             }, 8000); 
         } else {
             showContentInWorldMode();
+            // ถ้าไม่มี guide ให้โชว์เลย
+            if (homeBtn()) homeBtn().style.display = 'flex';
         }
     }
   };
@@ -319,9 +324,7 @@ export async function initAndStart(containerElement) {
   renderer.setAnimationLoop(()=> {
     const delta = clock.getDelta();
     if (mixer) mixer.update(delta);
-    
     if (controls) controls.update();
-
     if (activeCamera) renderer.render(scene, activeCamera);
   });
 }
@@ -333,14 +336,12 @@ function showContentInWorldMode() {
     contentGroup.scale.set(1, 1, 1);
 
     if (controls) controls.dispose();
-
     controls = new OrbitControls(activeCamera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.enableZoom = true;
     controls.enablePan = false; 
     controls.enableRotate = true; 
-    
     controls.target.set(0, 0, 0);
     controls.update();
 
@@ -368,14 +369,8 @@ async function startPlaybackSequence() {
 }
 
 export async function playCareer(career) {
-  if (backBtn()) backBtn().style.display = 'inline-block';
   if (careerMenu()) careerMenu().style.display = 'none';
-  if (career !== 'Computer') {
-    if (careerActions()) careerActions().style.display = 'flex';
-  } else {
-    if (careerActions()) careerActions().style.display = 'none';
-  }
-
+  
   setAutoPlayEnabled(true);
   
   if (playingCareer === career) {
@@ -383,6 +378,8 @@ export async function playCareer(career) {
     if (isWorldMode) {
         if(videoElem) videoElem.play().catch(()=>{});
         if(mixer) mixer.timeScale = 1;
+        // กลับมาเล่นต่อใน AR -> โชว์ปุ่ม Home
+        if (homeBtn()) homeBtn().style.display = 'flex'; 
     } 
     return;
   }
@@ -395,6 +392,9 @@ export async function playCareer(career) {
   await ensureContentForCareer(career);
 
   if (isWorldMode) {
+      // อยู่ใน AR -> โชว์ปุ่ม Home
+      if (homeBtn()) homeBtn().style.display = 'flex';
+
       if (contentGroup) {
           contentGroup.visible = true;
           contentGroup.rotation.set(0, 0, 0);
@@ -407,7 +407,9 @@ export async function playCareer(career) {
       }
       startPlaybackSequence();
   } else {
-      setNoScan(false);
+      // ยังไม่อยู่ใน AR -> กลับไปโหมดสแกน -> ซ่อนปุ่ม Home
+      setNoScan(false); 
+      if (homeBtn()) homeBtn().style.display = 'none';
   }
 }
 
@@ -416,15 +418,19 @@ export function pauseAndShowMenu() {
   if (mixer) try { mixer.timeScale = 0; } catch(e){}
   isPausedByBack = true;
   setAutoPlayEnabled(false);
-  if (careerActions()) careerActions().style.display = (playingCareer && playingCareer !== 'Computer') ? 'flex' : 'none';
+  
   if (careerMenu()) careerMenu().style.display = 'flex';
-  if (backBtn()) backBtn().style.display = 'none';
+  
+  // เข้าเมนู -> ซ่อนปุ่ม Home
+  if (homeBtn()) homeBtn().style.display = 'none'; 
+  
+  // โชว์ปุ่ม Return ในเมนู
   try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'inline-block'; } catch(e){}
 }
 
 export function returnToLast() {
   if (!lastCareer) return;
-  playCareer(lastCareer);
+  playCareer(lastCareer); 
 }
 
 export function removeCurrentAndShowMenu() {
@@ -432,9 +438,9 @@ export function removeCurrentAndShowMenu() {
   playingCareer = null; 
   isPausedByBack = false; 
   setAutoPlayEnabled(true);
-  if (careerActions()) careerActions().style.display = 'none';
+  
   if (careerMenu()) careerMenu().style.display = 'flex';
-  if (backBtn()) backBtn().style.display = 'none';
+  if (homeBtn()) homeBtn().style.display = 'none'; 
   try { const rb = document.getElementById('return-btn'); if (rb) rb.style.display = 'none'; } catch(e){}
   setNoScan(true);
 }

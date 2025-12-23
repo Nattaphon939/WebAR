@@ -6,27 +6,23 @@ export function initGameLauncher() {
   if (!gameBtn) return;
 
   gameBtn.addEventListener('click', async () => {
-    // เตรียม AR (ล้างค่าเดิมและปิดการสแกน)
     try { AR.resetToIdle(); } catch(e){}
     AR.setNoScan(true);
 
-    // ซ่อน UI หลัก
     const careerMenu = document.getElementById('career-menu');
     if (careerMenu) careerMenu.style.display = 'none';
     const scanFrame = document.getElementById('scan-frame');
     if (scanFrame) scanFrame.style.display = 'none';
-    const backBtn = document.getElementById('backBtn');
-    if (backBtn) backBtn.style.display = 'none';
+    const homeBtn = document.getElementById('homeBtn'); 
+    if (homeBtn) homeBtn.style.display = 'none';
 
     try {
-      // โหลดไฟล์ game.html
       const res = await fetch('game.html');
       if (!res.ok) throw new Error('game not found');
       const htmlText = await res.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlText, 'text/html');
       
-      // สร้าง Overlay สำหรับเกม
       const overlayId = 'game-overlay';
       let overlay = document.getElementById(overlayId);
       if (!overlay) {
@@ -39,7 +35,6 @@ export function initGameLauncher() {
         document.body.appendChild(overlay);
       }
       
-      // Inject CSS จาก game.html
       const links = Array.from(doc.querySelectorAll('link[rel="stylesheet"]'));
       links.forEach(link => {
         const href = link.getAttribute('href');
@@ -50,34 +45,32 @@ export function initGameLauncher() {
       });
       overlay.innerHTML = doc.body.innerHTML;
 
-      // Inject JS Module (game.js)
       const existingScript = document.querySelector('script[data-game-module]');
       if (existingScript) existingScript.remove();
       const s = document.createElement('script');
       s.type = 'module'; s.src = 'js/game.js?ts=' + Date.now(); s.setAttribute('data-game-module','1');
       document.body.appendChild(s);
 
-      // สร้างปุ่มปิด (Close Button)
+      // ✅ สร้างปุ่มเมนูหลัก (Home) แทนปุ่ม X
       const closeBtn = overlay.querySelector('#game-close-btn') || (() => {
         const b = document.createElement('button'); 
         b.id = 'game-close-btn'; 
-        b.textContent = '✕';
+        b.innerHTML = '🏠 เมนูหลัก'; // เปลี่ยนข้อความ
         Object.assign(b.style, { 
             position: 'fixed', left: '12px', top: '12px', zIndex: 10010, 
-            padding: '8px 10px', borderRadius: '8px', border: 'none', 
-            background: 'rgba(0,0,0,0.6)', color: '#00ffff', cursor: 'pointer', fontSize: '16px' 
+            padding: '8px 12px', borderRadius: '8px', 
+            border: '1px solid rgba(255, 255, 255, 0.06)', 
+            background: 'rgba(0, 0, 0, 0.5)', 
+            color: '#00ffff', cursor: 'pointer', 
+            fontWeight: 'bold', fontSize: '14px',
+            display: 'flex', alignItems: 'center', gap: '6px'
         });
         
-        // ✅ แก้ไขตรงนี้: ใส่ปุ่มลงใน overlay (ไม่ใช่ document.body)
-        // เพื่อให้ตอนลบ overlay ปุ่มจะหายไปด้วย
         overlay.appendChild(b);
-        
         return b;
       })();
 
-      // Logic ปุ่มปิดเกม
       closeBtn.onclick = () => {
-        // หยุดกล้อง/วิดีโอในเกม (ถ้ามี)
         try {
           const vid = overlay.querySelector('video');
           if (vid && vid.srcObject) {
@@ -87,21 +80,17 @@ export function initGameLauncher() {
           }
         } catch(e){}
         
-        // ลบ Overlay และ Script
         try { overlay.remove(); } catch(e){}
         const scr = document.querySelector('script[data-game-module]');
         if (scr) scr.remove();
         document.querySelectorAll('[data-confetti]').forEach(n=>n.remove());
         
-        // รีเซ็ต AR และ UI กลับสู่หน้าเมนู
         try { AR.resetToIdle(); } catch(e){}
         
         if (careerMenu) careerMenu.style.display = 'flex';
-        const careerActions = document.getElementById('career-actions');
-        if (careerActions) careerActions.style.display = 'flex';
+        // ไม่ต้องสั่ง careerActions เพราะแสดงผลด้วย CSS flex แล้ว
         
-        // ซ่อนปุ่มย้อนกลับต่างๆ เพราะเรากลับมาหน้าเมนูแล้ว
-        if (backBtn) backBtn.style.display = 'none';
+        if (homeBtn) homeBtn.style.display = 'none'; 
         const returnBtn = document.getElementById('return-btn');
         if (returnBtn) returnBtn.style.display = 'none';
         
@@ -113,10 +102,7 @@ export function initGameLauncher() {
       console.warn(e);
       alert('ไม่สามารถโหลดเกมได้ — ตรวจสอบไฟล์ game.html');
       
-      // กรณี Error ให้กู้คืนหน้าเมนู
       if (careerMenu) careerMenu.style.display = 'flex';
-      const careerActions = document.getElementById('career-actions');
-      if (careerActions) careerActions.style.display = 'flex';
       try { AR.resetToIdle(); } catch(e){}
     }
   });
