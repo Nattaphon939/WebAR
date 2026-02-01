@@ -25,14 +25,16 @@ export function initContact() {
       background: 'rgba(0,0,0,0.6)', 
       backdropFilter: 'blur(3px)', 
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      // จัดเนื้อหาให้ชิดด้านล่าง
-      justifyContent: 'flex-end', 
-      // ✅ ลด Padding ด้านล่างลงเพื่อให้ปุ่มต่ำลงกว่าเดิม (เดิม 130px -> 50px)
-      padding: '20px 20px 50px 20px',
+      justifyContent: 'flex-end', // จัดเนื้อหาชิดล่างเหมือนเดิม
+      
+      // ✅ แก้ไข 1: เพิ่ม padding ด้านล่างให้เยอะขึ้น (จาก 50px -> 180px)
+      // เพื่อดันปุ่มให้ลอยขึ้นมาอยู่ใต้ลูกศรพอดี ไม่จมอยู่ขอบจอ
+      padding: '20px 20px 180px 20px', 
+      
       overflow: 'hidden' 
     });
 
-    // 2. เพิ่ม Video Background
+    // 2. เพิ่ม Video Background (เต็มจอแน่นอน)
     const bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.autoplay = true;
@@ -40,9 +42,8 @@ export function initContact() {
     bgVideo.muted = true; 
     bgVideo.playsInline = true;
     
-    // ✅ แก้ไข: ใช้ fixed และ vw/vh เพื่อบังคับเต็มจอ 100% ไม่สน padding
     Object.assign(bgVideo.style, {
-      position: 'fixed', // เปลี่ยนเป็น fixed เทียบกับหน้าจอ
+      position: 'fixed', 
       top: '0', left: '0',
       width: '100vw', height: '100vh',
       objectFit: 'cover',
@@ -52,7 +53,7 @@ export function initContact() {
     
     overlay.appendChild(bgVideo); 
 
-    // 3. สร้าง Container สำหรับเนื้อหา
+    // 3. Container เนื้อหา
     const contentContainer = document.createElement('div');
     Object.assign(contentContainer.style, {
       position: 'relative', 
@@ -62,7 +63,7 @@ export function initContact() {
       zIndex: '2'
     });
 
-    // 4. Wrapper สำหรับปุ่ม Facebook
+    // 4. Wrapper ปุ่ม
     const fbWrapper = document.createElement('div');
     Object.assign(fbWrapper.style, {
       position: 'relative', 
@@ -70,7 +71,7 @@ export function initContact() {
       marginTop: '0' 
     });
 
-    // 5. สร้างปุ่ม Facebook
+    // 5. ปุ่ม Facebook
     const fbLink = document.createElement('a');
     fbLink.href = '#'; 
     Object.assign(fbLink.style, {
@@ -82,10 +83,9 @@ export function initContact() {
       boxShadow: '0 0 25px rgba(24, 119, 242, 0.6)',
       transition: 'transform 0.2s ease'
     });
-
+    // ...event handlers...
     fbLink.onmouseover = () => fbLink.style.transform = 'scale(1.05)';
     fbLink.onmouseout = () => fbLink.style.transform = 'scale(1.0)';
-
     fbLink.onclick = (e) => {
       e.preventDefault(); 
       const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -115,7 +115,7 @@ export function initContact() {
     
     fbWrapper.appendChild(fbLink);
 
-    // 6. เพิ่มมือชี้ (Hand Gesture)
+    // 6. มือชี้ (Hand Gesture)
     const handIcon = document.createElement('div');
     handIcon.innerHTML = `
       <svg viewBox="0 0 24 24" fill="white" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%; height:100%; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));">
@@ -128,9 +128,10 @@ export function initContact() {
     Object.assign(handIcon.style, {
       position: 'absolute',
       width: '70px', height: '70px',
-      // ✅ มือชี้อยู่ตำแหน่งเดิม (หรือปรับตามชอบ) แต่เพราะ Padding ลดลง ปุ่มจะต่ำลง มือก็จะต่ำลงตามปุ่มครับ
-      bottom: '-110px', 
-      right: '-40px',
+      // ✅ แก้ไข 2: ดึงมือกลับขึ้นมาให้ใกล้ปุ่มมากขึ้น (จาก -110px เป็น -60px)
+      // ปรับตำแหน่งให้เหมือนกำลังกดปุ่มอยู่
+      bottom: '-60px', 
+      right: '-30px',
       transform: 'rotate(-30deg)',
       pointerEvents: 'none', 
       zIndex: '10'
@@ -152,10 +153,9 @@ export function initContact() {
     
     fbWrapper.appendChild(handIcon);
     contentContainer.appendChild(fbWrapper);
-
     overlay.appendChild(contentContainer);
 
-    // 7. ปุ่มเมนูหลัก (Home)
+    // 7. ปุ่มเมนูหลัก
     const closeBtn = document.createElement('button');
     closeBtn.innerHTML = '🏠 เมนูหลัก';
     Object.assign(closeBtn.style, {
