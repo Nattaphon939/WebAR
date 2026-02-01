@@ -29,14 +29,13 @@ export function initContact() {
   if (!contactBtn) return;
 
   // -----------------------------------------------------------
-  // 🧹 ฟังก์ชันทำลายตัวเอง (Destroy) - OPTIMIZED
+  // 🧹 ฟังก์ชันทำลายตัวเอง (Destroy)
   // -----------------------------------------------------------
   const destroyContact = () => {
       console.log("💥 Contact destroyed because other content selected.");
       
       if(initTimeout) clearTimeout(initTimeout);
       
-      // 1. Dispose Three.js Objects
       if (scene) {
           scene.traverse((object) => {
               if (object.isMesh) {
@@ -52,14 +51,12 @@ export function initContact() {
           });
       }
 
-      // 2. Cleanup Renderer
       if (renderer) { 
           renderer.dispose(); 
           renderer.forceContextLoss(); 
           renderer.domElement = null;
       }
 
-      // 3. Cleanup Media
       if (sound) { sound.pause(); sound.src = ""; sound = null; }
       if (bgVideo) { bgVideo.pause(); bgVideo.src = ""; bgVideo.load(); bgVideo = null; }
 
@@ -78,9 +75,6 @@ export function initContact() {
       }
   };
 
-  // -----------------------------------------------------------
-  // 👂 ตัวดักฟัง: ถ้ากดปุ่มอื่นในเมนู -> ลบ Contact ทิ้ง
-  // -----------------------------------------------------------
   const menuClickListener = (e) => {
       const clickedContact = e.target.closest('#contact-btn');
       if (clickedContact) return; 
@@ -101,35 +95,47 @@ export function initContact() {
     if(document.getElementById('homeBtn')) document.getElementById('homeBtn').style.display = 'none';
 
     // -------------------------------------------------------
-    // 🔁 CASE 1: RESUME (กดรอบที่ 2)
+    // 🔁 CASE 1: RESUME (กดรอบที่ 2) - 🔥 แก้ไขเรื่องเสียงไม่ตรง
     // -------------------------------------------------------
     if (isLoaded && overlay) {
         if(homeBtn) homeBtn.style.display = 'flex';
         
+        // 1. หยุดทุกอย่างก่อน
         if(sound) sound.pause();
         if(bgVideo) bgVideo.pause();
-        if(mixer) mixer.timeScale = 0;
+        
+        // 2. บังคับ Reset Animation แบบ Hard Reset
+        if(mixer) {
+             mixer.timeScale = 0; // หยุดเวลาของโมเดล
+             mixer.stopAllAction(); // หยุด Action ทั้งหมด
+             
+             // วนลูป Action ทั้งหมดที่มีเพื่อ Reset ค่าเวลาเป็น 0
+             mixer._actions.forEach(action => {
+                 action.reset();   // สั่งคืนค่าเริ่มต้น
+                 action.time = 0;  // 🔥 สำคัญ: บังคับเวลาเป็น 0.00 วินาที
+                 action.play();    // สั่ง Active ไว้ก่อน
+                 action.paused = true; // แต่ Pause ไว้รอเสียง
+             });
+             
+             mixer.update(0); // 🔥 สั่งอัปเดตโมเดลทันที เพื่อให้ปากหุบ (กลับท่าเริ่มต้น) ก่อนเสียงมา
+        }
 
+        // 3. Reset เวลาของ Media
         if(sound) sound.currentTime = 0;
         if(bgVideo) bgVideo.currentTime = 0;
 
-        if(mixer) {
-             mixer.stopAllAction();
-             mixer._actions.forEach(action => {
-                 action.reset();
-                 action.play();
-                 action.paused = true; 
-             });
-        }
-
+        // 4. เริ่มเล่น (Sync)
         if (sound) {
+            // ใช้ Promise รอให้เสียงเริ่มดังจริงๆ ก่อนค่อยขยับปาก
             sound.play().then(() => {
                 if(bgVideo) bgVideo.play().catch(()=>{});
+                
                 if(mixer) {
-                    mixer.timeScale = 1;
-                    mixer._actions.forEach(a => a.paused = false);
+                    mixer.timeScale = 1; // เดินเวลาต่อ
+                    mixer._actions.forEach(a => a.paused = false); // ปล่อย Pause
                 }
             }).catch(()=>{ 
+                // กรณีเสียง Error (เช่น Browser Block) ให้เล่นภาพไปเลย
                 if(bgVideo) bgVideo.play();
                 if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(a => a.paused = false); }
             });
@@ -151,26 +157,20 @@ export function initContact() {
     // -------------------------------------------------------
     isLoaded = true;
 
-    // ✅ OVERLAY: ใช้หน่วย dvh เพื่อให้เต็มจอจริงๆ บนมือถือ
+    // Overlay (100dvh for Mobile)
     overlay = document.createElement('div');
     Object.assign(overlay.style, {
-      position: 'fixed', 
-      top: '0', left: '0',
-      width: '100vw',        // กว้างเต็มจอ
-      height: '100dvh',      // 🔥 สำคัญ: ใช้ dvh (Dynamic Viewport Height) แก้ปัญหาจอมือถือ
-      zIndex: '10000',
-      background: '#000',    // พื้นหลังดำกันภาพขาด
-      display: 'flex', 
-      flexDirection: 'column', 
-      alignItems: 'center',
-      justifyContent: 'flex-end', 
-      padding: '0 0 200px 0', // Padding ดันปุ่มขึ้นมา (ปรับตามความเหมาะสม)
-      overflow: 'hidden',
-      margin: '0', boxSizing: 'border-box'
+      position: 'fixed', top: '0', left: '0',
+      width: '100vw', height: '100dvh',      
+      zIndex: '10000', background: '#000',    
+      display: 'flex', flexDirection: 'column', 
+      alignItems: 'center', justifyContent: 'flex-end', 
+      padding: '0 0 200px 0', 
+      overflow: 'hidden', margin: '0', boxSizing: 'border-box'
     });
     document.body.appendChild(overlay);
 
-    // ✅ VIDEO: ปรับให้ยืดเต็มกรอบ Overlay แน่นอน
+    // Video (Object-fit: fill)
     bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.loop = true; 
@@ -179,11 +179,8 @@ export function initContact() {
     bgVideo.autoplay = false; 
     bgVideo.style.willChange = 'transform, opacity';
     Object.assign(bgVideo.style, {
-      position: 'absolute', 
-      top: '0', left: '0', 
-      width: '100%', 
-      height: '100%', 
-      // 🔥 เลือก Fill ถ้าคุณทำมาพอดีเป๊ะแล้วอยากให้ยืดให้เต็ม / หรือ Cover ถ้าไม่อยากให้ภาพบิดเบี้ยว
+      position: 'absolute', top: '0', left: '0', 
+      width: '100%', height: '100%', 
       objectFit: 'fill',  
       zIndex: '0'
     });
@@ -203,13 +200,7 @@ export function initContact() {
     camera.lookAt(0, 1.0, 0);
     scene.userData = { camera: camera }; 
 
-    // Renderer (Optimized)
-    renderer = new THREE.WebGLRenderer({ 
-        alpha: true, 
-        antialias: true,
-        precision: 'mediump', 
-        powerPreference: 'default' 
-    });
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, precision: 'mediump', powerPreference: 'default' });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.outputEncoding = THREE.sRGBEncoding; 
@@ -268,7 +259,7 @@ export function initContact() {
 
         scene.add(model);
 
-        // Sync Start
+        // Sync Start (First Load)
         initTimeout = setTimeout(() => {
             if (!overlay) return; 
             try { 
@@ -375,9 +366,6 @@ function setupUI(overlay) {
     contentContainer.appendChild(fbWrapper);
     overlay.appendChild(contentContainer);
 
-    // =========================================================
-    // 🏠 ปุ่มเมนูหลัก
-    // =========================================================
     homeBtn = document.createElement('button');
     homeBtn.innerHTML = '🏠 เมนูหลัก';
     Object.assign(homeBtn.style, {
