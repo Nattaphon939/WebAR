@@ -17,7 +17,6 @@ let sound = null;
 let mixer = null;
 let renderer = null;
 let scene = null;
-let camera = null;
 let homeBtn = null;
 let clock = new THREE.Clock();
 let rafId = null; 
@@ -30,85 +29,94 @@ export function initContact() {
   if (!contactBtn) return;
 
   // -----------------------------------------------------------
-  // 🧹 Destroy Function
+  // 🧹 ฟังก์ชันทำลายตัวเอง (Destroy) - OPTIMIZED
   // -----------------------------------------------------------
   const destroyContact = () => {
-      console.log("💥 Contact Destroyed");
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      console.log("💥 Contact destroyed because other content selected.");
+      
       if(initTimeout) clearTimeout(initTimeout);
+      
+      // 1. Dispose Three.js Objects (Memory Cleanup)
+      if (scene) {
+          scene.traverse((object) => {
+              if (object.isMesh) {
+                  if (object.geometry) object.geometry.dispose();
+                  if (object.material) {
+                      // รองรับทั้ง Material เดี่ยวและ Array
+                      if (Array.isArray(object.material)) {
+                          object.material.forEach(m => m.dispose());
+                      } else {
+                          object.material.dispose();
+                      }
+                  }
+              }
+          });
+      }
 
-      if (sound) { sound.pause(); sound.src = ""; sound = null; }
-      if (bgVideo) { bgVideo.pause(); bgVideo.src = ""; bgVideo = null; }
-
+      // 2. Cleanup Renderer
       if (renderer) { 
           renderer.dispose(); 
           renderer.forceContextLoss(); 
-          renderer.domElement.remove();
-          renderer = null; 
+          renderer.domElement = null;
       }
-      if (scene) {
-          scene.traverse((object) => {
-              if (object.geometry) object.geometry.dispose();
-              if (object.material) {
-                  if (Array.isArray(object.material)) object.material.forEach(m => m.dispose());
-                  else object.material.dispose();
-              }
-          });
-          scene = null;
-      }
+
+      // 3. Cleanup Media
+      if (sound) { sound.pause(); sound.src = ""; sound = null; }
+      if (bgVideo) { bgVideo.pause(); bgVideo.src = ""; bgVideo.load(); bgVideo = null; } // Clear buffer
+
+      if (rafId) cancelAnimationFrame(rafId);
+      if (overlay) overlay.remove();
+      
+      overlay = null;
       mixer = null;
-      camera = null;
-
-      if (overlay) { overlay.remove(); overlay = null; }
+      scene = null;
+      renderer = null;
       isLoaded = false;
-      homeBtn = null;
-
+      
+      // เอาตัวดักฟังออกด้วย (เพื่อไม่ให้ทำงานซ้ำซ้อน)
       if(careerMenu) {
           careerMenu.style.zIndex = ''; 
           careerMenu.removeEventListener('click', menuClickListener);
       }
   };
 
+  // -----------------------------------------------------------
+  // 👂 ตัวดักฟัง: ถ้ากดปุ่มอื่นในเมนู -> ลบ Contact ทิ้ง
+  // -----------------------------------------------------------
   const menuClickListener = (e) => {
-      if (e.target.closest('#contact-btn')) return;
-      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
-          destroyContact();
-      }
-  };
-
-  // -----------------------------------------------------------
-  // 🎥 Render Loop
-  // -----------------------------------------------------------
-  const animate = () => {
-      if (!overlay || !renderer || !scene || !camera) return;
-      rafId = requestAnimationFrame(animate);
-      const delta = clock.getDelta();
-      if (mixer) mixer.update(delta);
-      renderer.render(scene, camera);
+      const clickedContact = e.target.closest('#contact-btn');
+      if (clickedContact) return; // ถ้ากด Contact (ตัวเอง) -> ไม่ต้องทำลาย
+      destroyContact();
   };
 
   // =========================================================
-  // 🟢 CLICK EVENT
+  // 🟢 CLICK EVENT (Main Logic)
   // =========================================================
   contactBtn.addEventListener('click', () => {
     try { AR.resetToIdle(); } catch(e){}
     AR.setNoScan(true); 
 
-    if(careerMenu) careerMenu.style.display = 'none';
+    if(careerMenu) {
+        careerMenu.style.display = 'none';
+        careerMenu.removeEventListener('click', menuClickListener);
+    }
     if(document.getElementById('homeBtn')) document.getElementById('homeBtn').style.display = 'none';
 
     // -------------------------------------------------------
-    // 🔁 CASE 1: RESUME
+    // 🔁 CASE 1: RESUME (กดรอบที่ 2)
     // -------------------------------------------------------
     if (isLoaded && overlay) {
-        overlay.style.display = 'flex';
         if(homeBtn) homeBtn.style.display = 'flex';
-
-        if(sound) { sound.currentTime = 0; sound.pause(); }
-        if(bgVideo) { bgVideo.currentTime = 0; bgVideo.pause(); }
         
+        if(sound) sound.pause();
+        if(bgVideo) bgVideo.pause();
+        if(mixer) mixer.timeScale = 0;
+
+        if(sound) sound.currentTime = 0;
+        if(bgVideo) bgVideo.currentTime = 0;
+
         if(mixer) {
-             mixer.stopAllAction(); 
+             mixer.stopAllAction();
              mixer._actions.forEach(action => {
                  action.reset();
                  action.play();
@@ -119,28 +127,39 @@ export function initContact() {
         if (sound) {
             sound.play().then(() => {
                 if(bgVideo) bgVideo.play().catch(()=>{});
-                if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(a => a.paused = false); }
-            }).catch(() => {
+                if(mixer) {
+                    mixer.timeScale = 1;
+                    mixer._actions.forEach(a => a.paused = false);
+                }
+            }).catch(()=>{ 
                 if(bgVideo) bgVideo.play();
                 if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(a => a.paused = false); }
             });
         }
 
-        if (!rafId) animate();
+        const animateResume = () => {
+            if (!overlay) return; 
+            rafId = requestAnimationFrame(animateResume);
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
+            // Render only if necessary check could go here, but keep simple
+            if (renderer && scene) renderer.render(scene, scene.userData.camera);
+        };
+        animateResume();
         return; 
     }
 
     // -------------------------------------------------------
-    // 🆕 CASE 2: INIT (Balanced Mode: AA On, Low Res)
+    // 🆕 CASE 2: INIT (สร้างครั้งแรก)
     // -------------------------------------------------------
     isLoaded = true;
 
-    // 1. Overlay
+    // Overlay
     overlay = document.createElement('div');
     Object.assign(overlay.style, {
       position: 'fixed', inset: '0', zIndex: '10000',
       background: 'rgba(0,0,0,0.6)', 
-      // backdropFilter: 'blur(3px)', // ปิด Blur เพื่อประหยัดทรัพยากร
+      backdropFilter: 'blur(3px)',
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'flex-end', 
       padding: '20px 20px 250px 20px', 
@@ -148,23 +167,22 @@ export function initContact() {
     });
     document.body.appendChild(overlay);
 
-    // 2. Video Background (Full Screen)
+    // Video
     bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.loop = true; 
     bgVideo.muted = true; 
     bgVideo.playsInline = true;
     bgVideo.autoplay = false; 
+    // Optimization: ใช้ Hardware Acceleration hint
+    bgVideo.style.willChange = 'transform, opacity';
     Object.assign(bgVideo.style, {
-      position: 'fixed', 
-      top: '0', left: '0',
-      width: '100%', height: '100%', 
-      objectFit: 'cover', 
-      zIndex: '-1'
+      position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
+      objectFit: 'cover', opacity: '0.8', zIndex: '0'
     });
     overlay.appendChild(bgVideo);
 
-    // 3. 3D Setup
+    // 3D Layer
     const modelLayer = document.createElement('div');
     Object.assign(modelLayer.style, {
         position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
@@ -173,20 +191,24 @@ export function initContact() {
     overlay.appendChild(modelLayer);
 
     scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100); // Reduce Far plane
     camera.position.set(0, 1.2, 4); 
     camera.lookAt(0, 1.0, 0);
+    scene.userData = { camera: camera }; 
 
-    // 🔥🔥🔥 BALANCED SETTINGS 🔥🔥🔥
+    // ✅ OPTIMIZATION: Config Renderer
     renderer = new THREE.WebGLRenderer({ 
         alpha: true, 
-        antialias: true, // ✅ เปิด: ลบรอยหยัก (ภาพสวย)
-        precision: "mediump", // ⚡ ใช้ความละเอียดปานกลาง (ประหยัดเครื่อง)
-        powerPreference: "default" // ⚡ ไม่บังคับ GPU แรงสุด
+        antialias: true,
+        precision: 'mediump', // ลดความละเอียดทศนิยม (เร็วขึ้นบนมือถือ)
+        powerPreference: 'default' 
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    // ⚡ บังคับเรนเดอร์ 1x (สำคัญมาก! ช่วยให้ลื่นแม้เปิด AA)
-    renderer.setPixelRatio(1); 
+    
+    // ✅ OPTIMIZATION: Limit Pixel Ratio (สำคัญมากสำหรับจอมือถือความละเอียดสูง)
+    // ใช้สูงสุดแค่ 1.5 - 2.0 พอ เกินกว่านี้กินแบตโดยไม่เห็นความต่างชัดเจน
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    
     renderer.outputEncoding = THREE.sRGBEncoding; 
     modelLayer.appendChild(renderer.domElement);
 
@@ -196,9 +218,9 @@ export function initContact() {
     dirLight.position.set(2, 5, 5);
     scene.add(dirLight);
 
-    // 4. Load Model
+    // Load Model
     Utils.loadGLTF(MODEL_PATH).then((gltf) => {
-        if (!gltf) return;
+        if (!gltf) { alert("โหลดโมเดลไม่สำเร็จ"); return; }
         const model = gltf.scene;
         
         const box = new THREE.Box3().setFromObject(model);
@@ -219,11 +241,14 @@ export function initContact() {
         model.traverse((node) => {
             if (node.isMesh) {
                 node.frustumCulled = false; 
-                node.castShadow = false; 
-                node.receiveShadow = false;
-                
                 if (node.material) {
                     node.material.side = THREE.DoubleSide;
+                    // Optimization: ถ้าไม่จำเป็นต้องโปร่งใส ให้ปิด transparent จะ render เร็วขึ้น
+                    // แต่ถ้าจำเป็นต้องใช้ ให้คงไว้
+                    if (node.material.transparent) {
+                        node.material.alphaTest = 0.5; 
+                        node.material.depthWrite = true; 
+                    }
                 }
             }
         });
@@ -242,14 +267,21 @@ export function initContact() {
 
         scene.add(model);
 
+        // Sync Start (First Load)
         initTimeout = setTimeout(() => {
             if (!overlay) return; 
             try { 
                 sound = new Audio(AUDIO_PATH);
                 sound.volume = 1.0;
                 sound.play().then(() => {
-                    if(bgVideo) { bgVideo.currentTime = 0; bgVideo.play().catch(()=>{}); }
-                    if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(action => action.paused = false); }
+                    if(bgVideo) {
+                        bgVideo.currentTime = 0; 
+                        bgVideo.play().catch(()=>{});
+                    }
+                    if(mixer) {
+                         mixer.timeScale = 1; 
+                         mixer._actions.forEach(action => action.paused = false);
+                    }
                 }).catch(() => {
                     if(bgVideo) bgVideo.play();
                     if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(action => action.paused = false); }
@@ -258,13 +290,22 @@ export function initContact() {
         }, 2000); 
     });
 
+    const animate = () => {
+        if (!overlay) return;
+        rafId = requestAnimationFrame(animate);
+        const delta = clock.getDelta();
+        if (mixer) mixer.update(delta);
+        renderer.render(scene, camera);
+    };
     animate();
 
     window.addEventListener('resize', () => {
-        if (!overlay || !camera || !renderer) return;
+        if (!overlay || !renderer) return; // Add Check
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
+        // Ensure pixel ratio stays optimized on resize
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     });
 
     setupUI(overlay);
@@ -334,6 +375,9 @@ function setupUI(overlay) {
     contentContainer.appendChild(fbWrapper);
     overlay.appendChild(contentContainer);
 
+    // =========================================================
+    // 🏠 ปุ่มเมนูหลัก
+    // =========================================================
     homeBtn = document.createElement('button');
     homeBtn.innerHTML = '🏠 เมนูหลัก';
     Object.assign(homeBtn.style, {
@@ -348,16 +392,47 @@ function setupUI(overlay) {
       if (sound) sound.pause();
       if (bgVideo) bgVideo.pause();
       if (mixer) mixer.timeScale = 0; 
-      
+      if (rafId) cancelAnimationFrame(rafId); 
+
       homeBtn.style.display = 'none';
-      overlay.style.display = 'none'; 
 
       if (careerMenu) {
           careerMenu.style.display = 'flex';
           careerMenu.style.zIndex = '20000'; 
           
           careerMenu.addEventListener('click', (e) => {
-             // Logic ทำลายตัวเองอยู่ข้างบน
+              if (e.target.closest('#contact-btn')) return; 
+              
+              if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+                  // CALL DESTROY MANUALLY (Copy logic here)
+                  if(initTimeout) clearTimeout(initTimeout);
+                  
+                  // Cleanup Mesh Logic
+                  if(scene) {
+                      scene.traverse((obj) => {
+                          if(obj.isMesh) {
+                              if(obj.geometry) obj.geometry.dispose();
+                              if(obj.material) {
+                                  if(Array.isArray(obj.material)) obj.material.forEach(m=>m.dispose());
+                                  else obj.material.dispose();
+                              }
+                          }
+                      });
+                  }
+                  
+                  if (renderer) { 
+                      renderer.dispose(); 
+                      renderer.forceContextLoss(); 
+                      renderer.domElement = null;
+                  }
+                  if (sound) { sound.pause(); sound = null; }
+                  if (bgVideo) { bgVideo.pause(); bgVideo.src = ""; bgVideo = null; }
+                  if (rafId) cancelAnimationFrame(rafId);
+                  
+                  if (overlay) overlay.remove();
+                  overlay = null; mixer = null; scene = null; renderer = null; isLoaded = false;
+                  careerMenu.style.zIndex = ''; 
+              }
           });
       }
       AR.setNoScan(true); 
