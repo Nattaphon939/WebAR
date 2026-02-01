@@ -42,7 +42,6 @@ export function initContact() {
               if (object.isMesh) {
                   if (object.geometry) object.geometry.dispose();
                   if (object.material) {
-                      // รองรับทั้ง Material เดี่ยวและ Array
                       if (Array.isArray(object.material)) {
                           object.material.forEach(m => m.dispose());
                       } else {
@@ -62,7 +61,7 @@ export function initContact() {
 
       // 3. Cleanup Media
       if (sound) { sound.pause(); sound.src = ""; sound = null; }
-      if (bgVideo) { bgVideo.pause(); bgVideo.src = ""; bgVideo.load(); bgVideo = null; } // Clear buffer
+      if (bgVideo) { bgVideo.pause(); bgVideo.src = ""; bgVideo.load(); bgVideo = null; }
 
       if (rafId) cancelAnimationFrame(rafId);
       if (overlay) overlay.remove();
@@ -73,7 +72,6 @@ export function initContact() {
       renderer = null;
       isLoaded = false;
       
-      // เอาตัวดักฟังออกด้วย (เพื่อไม่ให้ทำงานซ้ำซ้อน)
       if(careerMenu) {
           careerMenu.style.zIndex = ''; 
           careerMenu.removeEventListener('click', menuClickListener);
@@ -85,7 +83,7 @@ export function initContact() {
   // -----------------------------------------------------------
   const menuClickListener = (e) => {
       const clickedContact = e.target.closest('#contact-btn');
-      if (clickedContact) return; // ถ้ากด Contact (ตัวเอง) -> ไม่ต้องทำลาย
+      if (clickedContact) return; 
       destroyContact();
   };
 
@@ -142,7 +140,6 @@ export function initContact() {
             rafId = requestAnimationFrame(animateResume);
             const delta = clock.getDelta();
             if (mixer) mixer.update(delta);
-            // Render only if necessary check could go here, but keep simple
             if (renderer && scene) renderer.render(scene, scene.userData.camera);
         };
         animateResume();
@@ -154,12 +151,12 @@ export function initContact() {
     // -------------------------------------------------------
     isLoaded = true;
 
-    // Overlay
+    // ✅ OVERLAY: ปรับให้โล่ง (ลบ Blur) เพื่อให้วีดีโอเด่นและประหยัดเครื่อง
     overlay = document.createElement('div');
     Object.assign(overlay.style, {
       position: 'fixed', inset: '0', zIndex: '10000',
-      background: 'rgba(0,0,0,0.6)', 
-      backdropFilter: 'blur(3px)',
+      background: '#000', // สีดำรองหลังเผื่อวีดีโอมาช้า
+      // ลบ backdropFilter ออก เพื่อลดภาระ GPU และให้วีดีโอชัด
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'flex-end', 
       padding: '20px 20px 250px 20px', 
@@ -167,18 +164,20 @@ export function initContact() {
     });
     document.body.appendChild(overlay);
 
-    // Video
+    // ✅ VIDEO: ปรับให้เต็มจอและชัด 100%
     bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.loop = true; 
     bgVideo.muted = true; 
     bgVideo.playsInline = true;
     bgVideo.autoplay = false; 
-    // Optimization: ใช้ Hardware Acceleration hint
-    bgVideo.style.willChange = 'transform, opacity';
+    bgVideo.style.willChange = 'transform, opacity'; // Hardware Acceleration Hint
     Object.assign(bgVideo.style, {
-      position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
-      objectFit: 'cover', opacity: '0.8', zIndex: '0'
+      position: 'absolute', top: '0', left: '0', 
+      width: '100%', height: '100%', // ขยายเต็มพื้นที่
+      objectFit: 'cover', // บังคับให้เต็มจอโดยไม่เสียสัดส่วน (Crop ส่วนเกินอัตโนมัติ)
+      opacity: '1.0',     // ✅ แก้เป็น 1.0 (ชัดสุด ไม่จาง)
+      zIndex: '0'
     });
     overlay.appendChild(bgVideo);
 
@@ -191,24 +190,20 @@ export function initContact() {
     overlay.appendChild(modelLayer);
 
     scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100); // Reduce Far plane
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
     camera.position.set(0, 1.2, 4); 
     camera.lookAt(0, 1.0, 0);
     scene.userData = { camera: camera }; 
 
-    // ✅ OPTIMIZATION: Config Renderer
+    // Renderer (Optimized)
     renderer = new THREE.WebGLRenderer({ 
         alpha: true, 
         antialias: true,
-        precision: 'mediump', // ลดความละเอียดทศนิยม (เร็วขึ้นบนมือถือ)
+        precision: 'mediump', 
         powerPreference: 'default' 
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    
-    // ✅ OPTIMIZATION: Limit Pixel Ratio (สำคัญมากสำหรับจอมือถือความละเอียดสูง)
-    // ใช้สูงสุดแค่ 1.5 - 2.0 พอ เกินกว่านี้กินแบตโดยไม่เห็นความต่างชัดเจน
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    
     renderer.outputEncoding = THREE.sRGBEncoding; 
     modelLayer.appendChild(renderer.domElement);
 
@@ -243,8 +238,6 @@ export function initContact() {
                 node.frustumCulled = false; 
                 if (node.material) {
                     node.material.side = THREE.DoubleSide;
-                    // Optimization: ถ้าไม่จำเป็นต้องโปร่งใส ให้ปิด transparent จะ render เร็วขึ้น
-                    // แต่ถ้าจำเป็นต้องใช้ ให้คงไว้
                     if (node.material.transparent) {
                         node.material.alphaTest = 0.5; 
                         node.material.depthWrite = true; 
@@ -267,7 +260,7 @@ export function initContact() {
 
         scene.add(model);
 
-        // Sync Start (First Load)
+        // Sync Start
         initTimeout = setTimeout(() => {
             if (!overlay) return; 
             try { 
@@ -300,11 +293,10 @@ export function initContact() {
     animate();
 
     window.addEventListener('resize', () => {
-        if (!overlay || !renderer) return; // Add Check
+        if (!overlay || !renderer) return;
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
-        // Ensure pixel ratio stays optimized on resize
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     });
 
@@ -404,10 +396,8 @@ function setupUI(overlay) {
               if (e.target.closest('#contact-btn')) return; 
               
               if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
-                  // CALL DESTROY MANUALLY (Copy logic here)
                   if(initTimeout) clearTimeout(initTimeout);
                   
-                  // Cleanup Mesh Logic
                   if(scene) {
                       scene.traverse((obj) => {
                           if(obj.isMesh) {
