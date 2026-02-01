@@ -3,6 +3,7 @@ import * as AR from './ar.js';
 
 const FACEBOOK_URL = 'https://www.facebook.com/ComputerEngineering.rmutl';
 const FACEBOOK_DEEP_LINK = 'fb://facewebmodal/f?href=' + FACEBOOK_URL;
+const VIDEO_BG_PATH = './Contact/Contact.mp4'; // ✅ ระบุพาร์ทวีดีโอ
 
 export function initContact() {
   const contactBtn = document.getElementById('contact-btn');
@@ -17,42 +18,66 @@ export function initContact() {
     const homeBtn = document.getElementById('homeBtn');
     if (homeBtn) homeBtn.style.display = 'none';
 
-    // 1. สร้าง Overlay พื้นหลัง
+    // 1. สร้าง Overlay หลัก
     const overlay = document.createElement('div');
     Object.assign(overlay.style, {
       position: 'fixed', inset: '0', zIndex: '10000',
-      background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+      // ✅ ปรับสีพื้นหลังให้โปร่งแสงขึ้น เพื่อให้เห็นวีดีโอ (เดิม 0.85)
+      background: 'rgba(0,0,0,0.6)', 
+      backdropFilter: 'blur(3px)', // เบลอนิดหน่อยให้ดูสวยงาม
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      padding: '20px'
+      padding: '20px',
+      overflow: 'hidden' // ป้องกันวีดีโอล้น
     });
 
-    // 2. สร้าง Container สำหรับเนื้อหา
+    // ✅ 2. เพิ่ม Video Background
+    const bgVideo = document.createElement('video');
+    bgVideo.src = VIDEO_BG_PATH;
+    bgVideo.autoplay = true;
+    bgVideo.loop = true;
+    bgVideo.muted = true; // ต้อง Mute ถึงจะ Autoplay ได้ใน Browser ส่วนใหญ่
+    bgVideo.playsInline = true;
+    
+    Object.assign(bgVideo.style, {
+      position: 'absolute',
+      top: '0', left: '0',
+      width: '100%', height: '100%',
+      objectFit: 'cover', // ขยายเต็มจอโดยไม่เสียสัดส่วน
+      zIndex: '-1', // อยู่หลังสุด
+      opacity: '0.8' // ปรับความเข้มวีดีโอตามชอบ
+    });
+    
+    overlay.appendChild(bgVideo); // ใส่ Video เข้าไปใน Overlay ก่อนเพื่อน
+
+    // 3. สร้าง Container สำหรับเนื้อหา (ปุ่ม FB)
     const contentContainer = document.createElement('div');
     Object.assign(contentContainer.style, {
       position: 'relative', // สำคัญสำหรับจัดตำแหน่ง
       width: '100%', maxWidth: '500px',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      gap: '20px'
+      gap: '20px',
+      zIndex: '2' // อยู่เหนือวีดีโอ
     });
 
-    // 3. Wrapper สำหรับปุ่ม Facebook + มือ
+    // 4. Wrapper สำหรับปุ่ม Facebook + มือ
     const fbWrapper = document.createElement('div');
     Object.assign(fbWrapper.style, {
-      position: 'relative', // เพื่อให้มืออ้างอิงตำแหน่งได้
+      position: 'relative', 
       display: 'inline-block',
-      marginTop: '40px' // ดันลงมาหน่อยให้อยู่กลางๆ
+      marginTop: '40px' 
     });
 
-    // 4. สร้างปุ่ม Facebook
+    // 5. สร้างปุ่ม Facebook
     const fbLink = document.createElement('a');
     fbLink.href = '#'; 
     Object.assign(fbLink.style, {
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px',
       textDecoration: 'none', cursor: 'pointer',
       padding: '25px 40px', borderRadius: '20px',
-      background: 'linear-gradient(135deg, rgba(24, 119, 242, 0.2), rgba(0, 0, 0, 0.6))',
+      // ปรับสีพื้นหลังปุ่มให้ทึบขึ้นเล็กน้อยเพราะมีวีดีโอข้างหลัง
+      background: 'linear-gradient(135deg, rgba(24, 119, 242, 0.9), rgba(0, 0, 0, 0.8))',
       border: '2px solid #1877F2',
-      boxShadow: '0 0 25px rgba(24, 119, 242, 0.4)',
+      boxShadow: '0 0 25px rgba(24, 119, 242, 0.6)',
       transition: 'transform 0.2s ease'
     });
 
@@ -88,7 +113,7 @@ export function initContact() {
     
     fbWrapper.appendChild(fbLink);
 
-    // 5. เพิ่มมือชี้ (Hand Gesture)
+    // 6. เพิ่มมือชี้ (Hand Gesture)
     const handIcon = document.createElement('div');
     handIcon.innerHTML = `
       <svg viewBox="0 0 24 24" fill="white" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:100%; height:100%; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));">
@@ -98,17 +123,15 @@ export function initContact() {
       </svg>
     `;
     
-    // Style ให้มืออยู่ด้านล่างขวาของปุ่ม แล้วชี้ขึ้นไป
     Object.assign(handIcon.style, {
       position: 'absolute',
       width: '70px', height: '70px',
-      bottom: '-60px', right: '-30px', // ปรับตำแหน่งให้เห็นชัดๆ
+      bottom: '-60px', right: '-30px', 
       transform: 'rotate(-30deg)',
-      pointerEvents: 'none', // ให้กดทะลุได้
+      pointerEvents: 'none', 
       zIndex: '10'
     });
 
-    // Inject Keyframes Animation สำหรับมือ
     if (!document.getElementById('hand-point-anim')) {
       const styleSheet = document.createElement('style');
       styleSheet.id = 'hand-point-anim';
@@ -126,10 +149,9 @@ export function initContact() {
     fbWrapper.appendChild(handIcon);
     contentContainer.appendChild(fbWrapper);
 
-    // ✅ บรรทัดสำคัญที่ลืมไป: ใส่ Content ลงใน Overlay
     overlay.appendChild(contentContainer);
 
-    // 6. ปุ่มเมนูหลัก (Home)
+    // 7. ปุ่มเมนูหลัก (Home)
     const closeBtn = document.createElement('button');
     closeBtn.innerHTML = '🏠 เมนูหลัก';
     Object.assign(closeBtn.style, {
