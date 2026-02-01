@@ -95,36 +95,41 @@ export function initContact() {
     if(document.getElementById('homeBtn')) document.getElementById('homeBtn').style.display = 'none';
 
     // -------------------------------------------------------
-    // 🔁 CASE 1: RESUME (กดรอบที่ 2) - ✅ แก้ไขแล้ว (Sync เสียง)
+    // 🔁 CASE 1: RESUME (กดรอบที่ 2) - ✅ แก้ไข: รีเซ็ตเฟรม 0 ใหม่หมด
     // -------------------------------------------------------
     if (isLoaded && overlay) {
         if(homeBtn) homeBtn.style.display = 'flex';
         
-        // 1. หยุดทุกอย่างก่อน และ Reset Clock
-        if(sound) { sound.pause(); sound.currentTime = 0; }
-        if(bgVideo) { bgVideo.pause(); bgVideo.currentTime = 0; }
+        // 1. หยุด Loop Animation และเสียงเก่าทันที
+        if (rafId) cancelAnimationFrame(rafId);
+        if (sound) { sound.pause(); sound.currentTime = 0; }
+        if (bgVideo) { bgVideo.pause(); bgVideo.currentTime = 0; }
         
-        // 2. Reset Animation ท่าทาง (แต่ยังไม่เริ่มเดินเวลา)
+        // 2. รีเซ็ตโมเดลกลับไปเฟรม 0 และแช่แข็งไว้
         if(mixer) {
-             mixer.stopAllAction(); // หยุดท่าเก่า
+             mixer.stopAllAction(); // หยุด Action เดิม
              
-             // Reset ทุก Action และ Play รอไว้ (แต่ timeScale เป็น 0 จะยังไม่ขยับ)
+             // รีเซ็ตทุก Action ไปที่จุดเริ่มต้น
              mixer._actions.forEach(action => {
                  action.reset();   
                  action.play();    
              });
              
-             // บังคับ update เป็น 0 เพื่อให้ปากหุบ/ท่าทางกลับมาจุดเริ่มต้นทันที
+             // 🔥 สำคัญ: บังคับ update เป็น 0 ทันที เพื่อให้ปากหุบและท่ายืนตรง
              mixer.update(0); 
-             mixer.timeScale = 0; // แช่แข็งโมเดลไว้ก่อน
              
-             // บังคับ Render 1 เฟรม เพื่อล้างภาพเก่าที่ค้างหน้าจอให้เป็นท่าเริ่มต้น
+             // 🔥 สำคัญ: Render ภาพนิ่ง 1 เฟรมทันที เพื่อลบภาพเก่าที่ค้างจอ
              if (renderer && scene) renderer.render(scene, scene.userData.camera);
+
+             mixer.timeScale = 0; // ❄️ แช่แข็งโมเดลไว้ ห้ามขยับจนกว่าเสียงจะมา
         }
 
-        // ฟังก์ชันสำหรับเริ่ม Loop Animation
+        // 3. รีเซ็ต Clock (เพื่อไม่ให้ Delta time กระโดด)
+        clock.stop();
+        clock.elapsedTime = 0;
+
+        // ฟังก์ชัน Loop Animation (จะเริ่มทำงานเมื่อเสียงพร้อม)
         const startAnimationLoop = () => {
-            // ป้องกันการเรียก Loop ซ้ำซ้อน
             if (rafId) cancelAnimationFrame(rafId);
 
             const animateResume = () => {
@@ -138,30 +143,33 @@ export function initContact() {
             animateResume();
         };
 
-        // 3. เริ่มเล่นเสียง (แล้วค่อยปล่อยภาพ)
+        // 4. สั่งเล่นเสียง -> รอ Promise -> เริ่มเล่นภาพ
         if (sound) {
-            sound.play().then(() => {
-                // ✅ เมื่อเสียงเริ่มดังจริง ค่อยเริ่มนับเวลาและปล่อยภาพ
-                clock.start(); // เริ่มจับเวลาตรงนี้ (สำคัญมาก)
-                
-                if(bgVideo) bgVideo.play().catch(()=>{});
-                
-                if(mixer) {
-                    mixer.timeScale = 1; // ปล่อยเวลาเดิน
-                }
+            // delay เล็กน้อยเพื่อให้ Audio Buffer เคลียร์ค่าเก่า
+            setTimeout(() => {
+                sound.play().then(() => {
+                    // ✅ จังหวะนี้เสียงเริ่มดังแล้ว
+                    
+                    clock.start(); // ⏰ เริ่มเดินเวลาอนิเมชั่นตรงนี้
+                    
+                    if(bgVideo) bgVideo.play().catch(()=>{});
+                    
+                    if(mixer) {
+                        mixer.timeScale = 1; // 🔓 ปลดล็อคให้โมเดลขยับ
+                    }
 
-                // เริ่ม Loop การขยับ
-                startAnimationLoop();
+                    startAnimationLoop(); // เริ่ม Loop
 
-            }).catch(() => { 
-                // Fallback: กรณี Browser บล็อคเสียง หรือ Error ให้ภาพเล่นไปเลย
-                clock.start();
-                if(bgVideo) bgVideo.play();
-                if(mixer) mixer.timeScale = 1;
-                startAnimationLoop();
-            });
+                }).catch(() => { 
+                    // กรณี Error (เช่น Browser บล็อคเสียง) ให้เล่นภาพไปเลยกันค้าง
+                    clock.start();
+                    if(bgVideo) bgVideo.play();
+                    if(mixer) mixer.timeScale = 1;
+                    startAnimationLoop();
+                });
+            }, 50); 
         } else {
-            // กรณีไม่มีไฟล์เสียง ให้เล่นภาพเลย
+            // กรณีไม่มีไฟล์เสียง
             clock.start();
             if(mixer) mixer.timeScale = 1;
             startAnimationLoop();
@@ -171,7 +179,7 @@ export function initContact() {
     }
 
     // -------------------------------------------------------
-    // 🆕 CASE 2: INIT (สร้างครั้งแรก) - ส่วนนี้ยังคงเดิม
+    // 🆕 CASE 2: INIT (สร้างครั้งแรก)
     // -------------------------------------------------------
     isLoaded = true;
 
@@ -183,7 +191,7 @@ export function initContact() {
       zIndex: '10000', background: '#000',    
       display: 'flex', flexDirection: 'column', 
       alignItems: 'center', justifyContent: 'flex-end', 
-      padding: '0 0 200px 0', 
+      padding: '0 0 180px 0', 
       overflow: 'hidden', margin: '0', boxSizing: 'border-box'
     });
     document.body.appendChild(overlay);
