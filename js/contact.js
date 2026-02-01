@@ -18,7 +18,7 @@ let mixer = null;
 let renderer = null;
 let scene = null;
 let homeBtn = null;
-let clock = new THREE.Clock();
+let clock = new THREE.Clock(); // ตัวจับเวลา
 let rafId = null; 
 let careerMenu = null;
 let initTimeout = null;
@@ -95,56 +95,58 @@ export function initContact() {
     if(document.getElementById('homeBtn')) document.getElementById('homeBtn').style.display = 'none';
 
     // -------------------------------------------------------
-    // 🔁 CASE 1: RESUME (กดรอบที่ 2) - 🔥 แก้ไขเรื่องเสียงไม่ตรง
+    // 🔁 CASE 1: RESUME (กดรอบที่ 2) - 🔥 แก้ไขแล้ว (Reset Clock)
     // -------------------------------------------------------
     if (isLoaded && overlay) {
         if(homeBtn) homeBtn.style.display = 'flex';
         
         // 1. หยุดทุกอย่างก่อน
-        if(sound) sound.pause();
-        if(bgVideo) bgVideo.pause();
+        if(sound) { sound.pause(); sound.currentTime = 0; }
+        if(bgVideo) { bgVideo.pause(); bgVideo.currentTime = 0; }
         
-        // 2. บังคับ Reset Animation แบบ Hard Reset
+        // 2. 🔥 แก้ไขสำคัญ: Reset Clock เพื่อไม่ให้ Animation กระโดดข้ามเวลา
+        clock.start(); // เริ่มนับเวลาใหม่เป็น 0 ทันที
+
+        // 3. Reset Animation แบบ Hard Reset
         if(mixer) {
-             mixer.timeScale = 0; // หยุดเวลาของโมเดล
-             mixer.stopAllAction(); // หยุด Action ทั้งหมด
+             mixer.stopAllAction(); // หยุดท่าเก่าทั้งหมด
              
-             // วนลูป Action ทั้งหมดที่มีเพื่อ Reset ค่าเวลาเป็น 0
+             // สั่ง Reset ทุก Action และ Play รอไว้
              mixer._actions.forEach(action => {
-                 action.reset();   // สั่งคืนค่าเริ่มต้น
-                 action.time = 0;  // 🔥 สำคัญ: บังคับเวลาเป็น 0.00 วินาที
-                 action.play();    // สั่ง Active ไว้ก่อน
-                 action.paused = true; // แต่ Pause ไว้รอเสียง
+                 action.reset();   
+                 action.play();    
              });
              
-             mixer.update(0); // 🔥 สั่งอัปเดตโมเดลทันที เพื่อให้ปากหุบ (กลับท่าเริ่มต้น) ก่อนเสียงมา
+             // บังคับ update เป็น 0 เพื่อให้ปากหุบ (Frame แรก) ทันที
+             mixer.update(0); 
+             mixer.timeScale = 0; // แช่แข็งโมเดลไว้ก่อน รอเสียงมา
+             
+             // บังคับ Render 1 เฟรม เพื่อล้างภาพเก่าที่ค้างหน้าจอ
+             if (renderer && scene) renderer.render(scene, scene.userData.camera);
         }
-
-        // 3. Reset เวลาของ Media
-        if(sound) sound.currentTime = 0;
-        if(bgVideo) bgVideo.currentTime = 0;
 
         // 4. เริ่มเล่น (Sync)
         if (sound) {
-            // ใช้ Promise รอให้เสียงเริ่มดังจริงๆ ก่อนค่อยขยับปาก
             sound.play().then(() => {
+                // เมื่อเสียงเริ่มดังจริง ค่อยปล่อยภาพเดิน
                 if(bgVideo) bgVideo.play().catch(()=>{});
                 
                 if(mixer) {
-                    mixer.timeScale = 1; // เดินเวลาต่อ
-                    mixer._actions.forEach(a => a.paused = false); // ปล่อย Pause
+                    clock.getDelta(); // 🔥 เคลียร์ค่า Delta ครั้งสุดท้ายทิ้งก่อนเริ่ม Loop
+                    mixer.timeScale = 1; // ปล่อยเวลาเดิน
                 }
             }).catch(()=>{ 
-                // กรณีเสียง Error (เช่น Browser Block) ให้เล่นภาพไปเลย
+                // Fallback กรณี Browser บล็อคเสียง
                 if(bgVideo) bgVideo.play();
-                if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(a => a.paused = false); }
+                if(mixer) { clock.getDelta(); mixer.timeScale = 1; }
             });
         }
 
         const animateResume = () => {
             if (!overlay) return; 
             rafId = requestAnimationFrame(animateResume);
-            const delta = clock.getDelta();
+            
+            const delta = clock.getDelta(); // ตอนนี้ delta จะเป็นค่าเวลาจริงของเฟรมต่อเฟรมแล้ว
             if (mixer) mixer.update(delta);
             if (renderer && scene) renderer.render(scene, scene.userData.camera);
         };
@@ -165,7 +167,7 @@ export function initContact() {
       zIndex: '10000', background: '#000',    
       display: 'flex', flexDirection: 'column', 
       alignItems: 'center', justifyContent: 'flex-end', 
-      padding: '0 0 200px 0', 
+      padding: '0 0 260px 0', 
       overflow: 'hidden', margin: '0', boxSizing: 'border-box'
     });
     document.body.appendChild(overlay);
