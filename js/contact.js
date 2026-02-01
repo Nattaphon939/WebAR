@@ -9,27 +9,135 @@ const VIDEO_BG_PATH = './Contact/Contact.mp4';
 const MODEL_PATH = './Contact/Contact.glb'; 
 const AUDIO_PATH = './Contact/Contact.wav';
 
+// 🔥 Global Variables
+let isLoaded = false;
+let overlay = null;
+let bgVideo = null;
+let sound = null;
+let mixer = null;
+let renderer = null;
+let scene = null;
+let homeBtn = null;
+let clock = new THREE.Clock();
+let rafId = null; 
+let careerMenu = null;
+let initTimeout = null;
+
 export function initContact() {
   const contactBtn = document.getElementById('contact-btn');
+  careerMenu = document.getElementById('career-menu');
   if (!contactBtn) return;
 
+  // -----------------------------------------------------------
+  // 🧹 ฟังก์ชันทำลายตัวเอง (Destroy)
+  // -----------------------------------------------------------
+  const destroyContact = () => {
+      console.log("💥 Contact destroyed because other content selected.");
+      
+      if(initTimeout) clearTimeout(initTimeout);
+      if (overlay) overlay.remove();
+      if (renderer) { renderer.dispose(); renderer.forceContextLoss(); }
+      if (sound) { sound.pause(); sound = null; }
+      if (rafId) cancelAnimationFrame(rafId);
+      
+      overlay = null;
+      bgVideo = null;
+      mixer = null;
+      isLoaded = false;
+      
+      // เอาตัวดักฟังออกด้วย (เพื่อไม่ให้ทำงานซ้ำซ้อน)
+      if(careerMenu) {
+          careerMenu.style.zIndex = ''; 
+          careerMenu.removeEventListener('click', menuClickListener);
+      }
+  };
+
+  // -----------------------------------------------------------
+  // 👂 ตัวดักฟัง: ถ้ากดปุ่มอื่นในเมนู -> ลบ Contact ทิ้ง
+  // -----------------------------------------------------------
+  const menuClickListener = (e) => {
+      // เช็คว่าสิ่งที่กด คือปุ่ม Contact หรือเปล่า?
+      const clickedContact = e.target.closest('#contact-btn');
+      
+      if (clickedContact) {
+          // ถ้ากด Contact (ตัวเอง) -> ไม่ต้องทำลาย (เพราะจะ Resume)
+          return;
+      }
+
+      // ถ้ากดสิ่งอื่นใดในเมนู (เช่น AI, Cloud, หรือพื้นที่ว่างๆ ที่เป็นปุ่ม)
+      // ให้ถือว่าเปลี่ยนเรื่อง -> ระเบิดตัวเองทิ้งเลย
+      destroyContact();
+  };
+
+  // =========================================================
+  // 🟢 CLICK EVENT (Main Logic)
+  // =========================================================
   contactBtn.addEventListener('click', () => {
     try { AR.resetToIdle(); } catch(e){}
-    AR.setNoScan(true);
-    
-    if(document.getElementById('career-menu')) document.getElementById('career-menu').style.display = 'none';
+    AR.setNoScan(true); 
+
+    if(careerMenu) {
+        careerMenu.style.display = 'none';
+        // เอา Listener ออกก่อน (กันพลาด) เดี๋ยวจะใส่กลับตอนกด Home
+        careerMenu.removeEventListener('click', menuClickListener);
+    }
     if(document.getElementById('homeBtn')) document.getElementById('homeBtn').style.display = 'none';
 
-    // 🔥 ประกาศตัวแปรไว้ด้านบน เพื่อให้ปุ่ม Home เรียกใช้ได้
-    let sound = null;
-    let bgVideo = null;
-    let mixer = null;
-    let overlay = null;
-    let modelLayer = null;
-    let contentContainer = null;
-    let homeBtn = null; // เพิ่มตัวแปรปุ่ม Home
+    // -------------------------------------------------------
+    // 🔁 CASE 1: RESUME (กดรอบที่ 2)
+    // -------------------------------------------------------
+    if (isLoaded && overlay) {
+        if(homeBtn) homeBtn.style.display = 'flex';
+        
+        // 1. Reset & Sync Logic
+        if(sound) sound.pause();
+        if(bgVideo) bgVideo.pause();
+        if(mixer) mixer.timeScale = 0;
 
-    // 1. Overlay
+        if(sound) sound.currentTime = 0;
+        if(bgVideo) bgVideo.currentTime = 0;
+
+        if(mixer) {
+             mixer.stopAllAction();
+             mixer._actions.forEach(action => {
+                 action.reset();
+                 action.play();
+                 action.paused = true; 
+             });
+        }
+
+        // 2. Play with Audio-First
+        if (sound) {
+            sound.play().then(() => {
+                if(bgVideo) bgVideo.play().catch(()=>{});
+                if(mixer) {
+                    mixer.timeScale = 1;
+                    mixer._actions.forEach(a => a.paused = false);
+                }
+            }).catch(()=>{ 
+                if(bgVideo) bgVideo.play();
+                if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(a => a.paused = false); }
+            });
+        }
+
+        // 3. Start Loop
+        const animateResume = () => {
+            if (!overlay) return; 
+            rafId = requestAnimationFrame(animateResume);
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
+            if (renderer && scene) renderer.render(scene, scene.userData.camera);
+        };
+        animateResume();
+        return; 
+    }
+
+    // -------------------------------------------------------
+    // 🆕 CASE 2: INIT (สร้างครั้งแรก)
+    // -------------------------------------------------------
+    isLoaded = true;
+
+    // Overlay
     overlay = document.createElement('div');
     Object.assign(overlay.style, {
       position: 'fixed', inset: '0', zIndex: '10000',
@@ -42,7 +150,7 @@ export function initContact() {
     });
     document.body.appendChild(overlay);
 
-    // 2. Video Background
+    // Video
     bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.loop = true; 
@@ -55,20 +163,21 @@ export function initContact() {
     });
     overlay.appendChild(bgVideo);
 
-    // 3. 3D Layer
-    modelLayer = document.createElement('div');
+    // 3D Layer
+    const modelLayer = document.createElement('div');
     Object.assign(modelLayer.style, {
         position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
         pointerEvents: 'none', zIndex: '1' 
     });
     overlay.appendChild(modelLayer);
 
-    const scene = new THREE.Scene();
+    scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 1.2, 4); 
-    camera.lookAt(0, 1.0, 0);       
+    camera.lookAt(0, 1.0, 0);
+    scene.userData = { camera: camera }; 
 
-    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.outputEncoding = THREE.sRGBEncoding; 
@@ -80,14 +189,11 @@ export function initContact() {
     dirLight.position.set(2, 5, 5);
     scene.add(dirLight);
 
-    const clock = new THREE.Clock();
-
-    // ✅ โหลดโมเดล
+    // Load Model
     Utils.loadGLTF(MODEL_PATH).then((gltf) => {
         if (!gltf) { alert("โหลดโมเดลไม่สำเร็จ"); return; }
         const model = gltf.scene;
         
-        // Auto-Center & Scale Logic
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -99,26 +205,22 @@ export function initContact() {
         const scaleFactor = targetHeight / size.y;
         if (size.y > 0) model.scale.multiplyScalar(scaleFactor);
         
-        // ตำแหน่ง & หันหน้า
         model.position.x -= 0.7;   
         model.position.y -= 1.05;  
         model.rotation.y = 0.25; 
 
-        // Material Fix
         model.traverse((node) => {
             if (node.isMesh) {
                 node.frustumCulled = false; 
                 if (node.material) {
                     node.material.side = THREE.DoubleSide;
                     if (node.material.transparent) {
-                        node.material.alphaTest = 0.5; 
-                        node.material.depthWrite = true; 
+                        node.material.alphaTest = 0.5; node.material.depthWrite = true; 
                     }
                 }
             }
         });
 
-        // Freeze Frame 1
         if (gltf.animations && gltf.animations.length > 0) {
             mixer = new THREE.AnimationMixer(model);
             gltf.animations.forEach((clip) => {
@@ -133,25 +235,32 @@ export function initContact() {
 
         scene.add(model);
 
-        // Sync Start
-        setTimeout(() => {
-            if (!document.body.contains(overlay)) return;
-            bgVideo.play().catch(e => {});
+        // Sync Start (First Load)
+        initTimeout = setTimeout(() => {
+            if (!overlay) return; 
             try { 
                 sound = new Audio(AUDIO_PATH);
                 sound.volume = 1.0;
                 sound.play().then(() => {
-                    if (mixer) mixer._actions.forEach(action => action.paused = false);
+                    if(bgVideo) {
+                        bgVideo.currentTime = 0; 
+                        bgVideo.play().catch(()=>{});
+                    }
+                    if(mixer) {
+                         mixer.timeScale = 1; 
+                         mixer._actions.forEach(action => action.paused = false);
+                    }
                 }).catch(() => {
-                    if (mixer) mixer._actions.forEach(action => action.paused = false);
+                    if(bgVideo) bgVideo.play();
+                    if(mixer) { mixer.timeScale = 1; mixer._actions.forEach(action => action.paused = false); }
                 });
             } catch(e){}
         }, 2000); 
     });
 
     const animate = () => {
-        if (!document.body.contains(overlay)) return;
-        requestAnimationFrame(animate);
+        if (!overlay) return;
+        rafId = requestAnimationFrame(animate);
         const delta = clock.getDelta();
         if (mixer) mixer.update(delta);
         renderer.render(scene, camera);
@@ -159,14 +268,18 @@ export function initContact() {
     animate();
 
     window.addEventListener('resize', () => {
-        if (!document.body.contains(overlay)) return;
+        if (!overlay) return;
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // 4. UI Layer (Facebook & Hand)
-    contentContainer = document.createElement('div');
+    setupUI(overlay);
+  });
+}
+
+function setupUI(overlay) {
+    const contentContainer = document.createElement('div');
     Object.assign(contentContainer.style, {
       position: 'relative', width: '100%', maxWidth: '500px',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -229,7 +342,7 @@ export function initContact() {
     overlay.appendChild(contentContainer);
 
     // =========================================================
-    // 🏠 ปุ่มเมนูหลัก (แบบใหม่: ไม่ลบพื้นหลังทิ้ง)
+    // 🏠 ปุ่มเมนูหลัก (PAUSE & HIDE -> Wait for Destroy trigger)
     // =========================================================
     homeBtn = document.createElement('button');
     homeBtn.innerHTML = '🏠 เมนูหลัก';
@@ -242,39 +355,38 @@ export function initContact() {
     });
     
     homeBtn.onclick = () => {
-      // 1. หยุดเสียงพูด
-      if (sound) {
-          sound.pause();
-          sound.currentTime = 0;
-      }
-      
-      // 2. ลบโมเดล 3D และ ปุ่ม Facebook (เคลียร์หน้าจอ)
-      if (modelLayer) modelLayer.remove();
-      if (contentContainer) contentContainer.remove();
-      if (renderer) renderer.dispose();
-      
-      // 3. ลบปุ่ม Home ตัวเองออก (เพราะเดี๋ยวเมนูหลักมาแทน)
-      homeBtn.remove();
+      // 1. Pause
+      if (sound) sound.pause();
+      if (bgVideo) bgVideo.pause();
+      if (mixer) mixer.timeScale = 0; 
+      if (rafId) cancelAnimationFrame(rafId); 
 
-      // 4. เรียกเมนูหลัก (Career Menu) กลับมา
-      const careerMenu = document.getElementById('career-menu');
+      // 2. Hide Self
+      homeBtn.style.display = 'none';
+
+      // 3. Show Career Menu
       if (careerMenu) {
           careerMenu.style.display = 'flex';
-          
-          // 🔥 สำคัญ: ดัน Z-Index ให้สูงกว่า Overlay (10000)
-          // เพื่อให้เมนูลอยอยู่เหนือวิดีโอพื้นหลัง
           careerMenu.style.zIndex = '20000'; 
+          
+          // 🔥 ฝังกับระเบิด: กดปุ่มอื่นในเมนูเมื่อไหร่ -> ระเบิด Contact ทิ้งทันที
+          careerMenu.addEventListener('click', (e) => {
+              // (เรียกฟังก์ชันข้างบนไม่ได้โดยตรง ต้องใช้ Logic เดียวกัน)
+              if (e.target.closest('#contact-btn')) return; // ถ้ากด Contact ไม่ต้องระเบิด (เดี๋ยว Resume)
+              
+              if (e.target.tagName === 'BUTTON' || e.target.closest('button')) {
+                  // COPY LOGIC DESTROY มาใส่ตรงนี้เพื่อให้ทำงานได้
+                  if(initTimeout) clearTimeout(initTimeout);
+                  if (overlay) overlay.remove();
+                  if (renderer) { renderer.dispose(); renderer.forceContextLoss(); }
+                  if (sound) { sound.pause(); sound = null; }
+                  if (rafId) cancelAnimationFrame(rafId);
+                  overlay = null; bgVideo = null; mixer = null; isLoaded = false;
+                  careerMenu.style.zIndex = ''; 
+              }
+          });
       }
-      
-      // 5. ❌ อย่าลบ overlay ทิ้ง! (เก็บ bgVideo ไว้เป็นพื้นหลังเมนู)
-      // overlay.remove(); <--- เอาบรรทัดนี้ออก
-
-      // คงสถานะ NoScan ไว้ เพื่อไม่ให้กล้องทำงานข้างหลัง
       AR.setNoScan(true); 
-      
-      // หมายเหตุ: ถ้ากดเลือกเมนูอื่น แล้วต้องการลบพื้นหลังนี้ 
-      // โค้ดส่วนอื่น (เช่น initAI) ควรจัดการเคลียร์หน้าจอเอง
     };
     overlay.appendChild(homeBtn);
-  });
 }
