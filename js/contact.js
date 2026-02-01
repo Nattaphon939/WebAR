@@ -36,7 +36,7 @@ export function initContact() {
       
       if(initTimeout) clearTimeout(initTimeout);
       
-      // 1. Dispose Three.js Objects (Memory Cleanup)
+      // 1. Dispose Three.js Objects
       if (scene) {
           scene.traverse((object) => {
               if (object.isMesh) {
@@ -151,32 +151,40 @@ export function initContact() {
     // -------------------------------------------------------
     isLoaded = true;
 
-    // ✅ OVERLAY: ปรับให้โล่ง (ลบ Blur) เพื่อให้วีดีโอเด่นและประหยัดเครื่อง
+    // ✅ OVERLAY: ใช้หน่วย dvh เพื่อให้เต็มจอจริงๆ บนมือถือ
     overlay = document.createElement('div');
     Object.assign(overlay.style, {
-      position: 'fixed', inset: '0', zIndex: '10000',
-      background: '#000', // สีดำรองหลังเผื่อวีดีโอมาช้า
-      // ลบ backdropFilter ออก เพื่อลดภาระ GPU และให้วีดีโอชัด
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      position: 'fixed', 
+      top: '0', left: '0',
+      width: '100vw',        // กว้างเต็มจอ
+      height: '100dvh',      // 🔥 สำคัญ: ใช้ dvh (Dynamic Viewport Height) แก้ปัญหาจอมือถือ
+      zIndex: '10000',
+      background: '#000',    // พื้นหลังดำกันภาพขาด
+      display: 'flex', 
+      flexDirection: 'column', 
+      alignItems: 'center',
       justifyContent: 'flex-end', 
-      padding: '20px 20px 250px 20px', 
-      overflow: 'hidden'
+      padding: '0 0 200px 0', // Padding ดันปุ่มขึ้นมา (ปรับตามความเหมาะสม)
+      overflow: 'hidden',
+      margin: '0', boxSizing: 'border-box'
     });
     document.body.appendChild(overlay);
 
-    // ✅ VIDEO: ปรับให้เต็มจอและชัด 100%
+    // ✅ VIDEO: ปรับให้ยืดเต็มกรอบ Overlay แน่นอน
     bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.loop = true; 
     bgVideo.muted = true; 
     bgVideo.playsInline = true;
     bgVideo.autoplay = false; 
-    bgVideo.style.willChange = 'transform, opacity'; // Hardware Acceleration Hint
+    bgVideo.style.willChange = 'transform, opacity';
     Object.assign(bgVideo.style, {
-      position: 'absolute', top: '0', left: '0', 
-      width: '100%', height: '100%', // ขยายเต็มพื้นที่
-      objectFit: 'cover', // บังคับให้เต็มจอโดยไม่เสียสัดส่วน (Crop ส่วนเกินอัตโนมัติ)
-      opacity: '1.0',     // ✅ แก้เป็น 1.0 (ชัดสุด ไม่จาง)
+      position: 'absolute', 
+      top: '0', left: '0', 
+      width: '100%', 
+      height: '100%', 
+      // 🔥 เลือก Fill ถ้าคุณทำมาพอดีเป๊ะแล้วอยากให้ยืดให้เต็ม / หรือ Cover ถ้าไม่อยากให้ภาพบิดเบี้ยว
+      objectFit: 'fill',  
       zIndex: '0'
     });
     overlay.appendChild(bgVideo);
