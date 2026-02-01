@@ -3,7 +3,7 @@ import * as AR from './ar.js';
 
 const FACEBOOK_URL = 'https://www.facebook.com/ComputerEngineering.rmutl';
 const FACEBOOK_DEEP_LINK = 'fb://facewebmodal/f?href=' + FACEBOOK_URL;
-const VIDEO_BG_PATH = './Contact/Contact.mp4'; // ✅ ระบุพาร์ทวีดีโอ
+const VIDEO_BG_PATH = './Contact/Contact.mp4'; 
 
 export function initContact() {
   const contactBtn = document.getElementById('contact-btn');
@@ -22,49 +22,52 @@ export function initContact() {
     const overlay = document.createElement('div');
     Object.assign(overlay.style, {
       position: 'fixed', inset: '0', zIndex: '10000',
-      // ✅ ปรับสีพื้นหลังให้โปร่งแสงขึ้น เพื่อให้เห็นวีดีโอ (เดิม 0.85)
       background: 'rgba(0,0,0,0.6)', 
-      backdropFilter: 'blur(3px)', // เบลอนิดหน่อยให้ดูสวยงาม
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      padding: '20px',
-      overflow: 'hidden' // ป้องกันวีดีโอล้น
+      backdropFilter: 'blur(3px)', 
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      // จัดเนื้อหาให้ชิดด้านล่าง
+      justifyContent: 'flex-end', 
+      // ✅ ลด Padding ด้านล่างลงเพื่อให้ปุ่มต่ำลงกว่าเดิม (เดิม 130px -> 50px)
+      padding: '20px 20px 50px 20px',
+      overflow: 'hidden' 
     });
 
-    // ✅ 2. เพิ่ม Video Background
+    // 2. เพิ่ม Video Background
     const bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.autoplay = true;
     bgVideo.loop = true;
-    bgVideo.muted = true; // ต้อง Mute ถึงจะ Autoplay ได้ใน Browser ส่วนใหญ่
+    bgVideo.muted = true; 
     bgVideo.playsInline = true;
     
+    // ✅ แก้ไข: ใช้ fixed และ vw/vh เพื่อบังคับเต็มจอ 100% ไม่สน padding
     Object.assign(bgVideo.style, {
-      position: 'absolute',
+      position: 'fixed', // เปลี่ยนเป็น fixed เทียบกับหน้าจอ
       top: '0', left: '0',
-      width: '100%', height: '100%',
-      objectFit: 'cover', // ขยายเต็มจอโดยไม่เสียสัดส่วน
-      zIndex: '-1', // อยู่หลังสุด
-      opacity: '0.8' // ปรับความเข้มวีดีโอตามชอบ
+      width: '100vw', height: '100vh',
+      objectFit: 'cover',
+      zIndex: '-1', 
+      opacity: '0.8' 
     });
     
-    overlay.appendChild(bgVideo); // ใส่ Video เข้าไปใน Overlay ก่อนเพื่อน
+    overlay.appendChild(bgVideo); 
 
-    // 3. สร้าง Container สำหรับเนื้อหา (ปุ่ม FB)
+    // 3. สร้าง Container สำหรับเนื้อหา
     const contentContainer = document.createElement('div');
     Object.assign(contentContainer.style, {
-      position: 'relative', // สำคัญสำหรับจัดตำแหน่ง
+      position: 'relative', 
       width: '100%', maxWidth: '500px',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       gap: '20px',
-      zIndex: '2' // อยู่เหนือวีดีโอ
+      zIndex: '2'
     });
 
-    // 4. Wrapper สำหรับปุ่ม Facebook + มือ
+    // 4. Wrapper สำหรับปุ่ม Facebook
     const fbWrapper = document.createElement('div');
     Object.assign(fbWrapper.style, {
       position: 'relative', 
       display: 'inline-block',
-      marginTop: '40px' 
+      marginTop: '0' 
     });
 
     // 5. สร้างปุ่ม Facebook
@@ -74,7 +77,6 @@ export function initContact() {
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px',
       textDecoration: 'none', cursor: 'pointer',
       padding: '25px 40px', borderRadius: '20px',
-      // ปรับสีพื้นหลังปุ่มให้ทึบขึ้นเล็กน้อยเพราะมีวีดีโอข้างหลัง
       background: 'linear-gradient(135deg, rgba(24, 119, 242, 0.9), rgba(0, 0, 0, 0.8))',
       border: '2px solid #1877F2',
       boxShadow: '0 0 25px rgba(24, 119, 242, 0.6)',
@@ -126,7 +128,9 @@ export function initContact() {
     Object.assign(handIcon.style, {
       position: 'absolute',
       width: '70px', height: '70px',
-      bottom: '-60px', right: '-30px', 
+      // ✅ มือชี้อยู่ตำแหน่งเดิม (หรือปรับตามชอบ) แต่เพราะ Padding ลดลง ปุ่มจะต่ำลง มือก็จะต่ำลงตามปุ่มครับ
+      bottom: '-110px', 
+      right: '-40px',
       transform: 'rotate(-30deg)',
       pointerEvents: 'none', 
       zIndex: '10'
