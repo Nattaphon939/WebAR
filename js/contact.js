@@ -18,7 +18,7 @@ let mixer = null;
 let renderer = null;
 let scene = null;
 let homeBtn = null;
-let clock = new THREE.Clock(); // ตัวจับเวลา
+let clock = new THREE.Clock(); 
 let rafId = null; 
 let careerMenu = null;
 let initTimeout = null;
@@ -82,7 +82,7 @@ export function initContact() {
   };
 
   // =========================================================
-  // 🟢 CLICK EVENT (Main Logic)
+  // 🟢 CLICK EVENT
   // =========================================================
   contactBtn.addEventListener('click', () => {
     try { AR.resetToIdle(); } catch(e){}
@@ -95,73 +95,50 @@ export function initContact() {
     if(document.getElementById('homeBtn')) document.getElementById('homeBtn').style.display = 'none';
 
     // -------------------------------------------------------
-    // 🔁 CASE 1: RESUME (กดรอบที่ 2) - ✅ แก้ไข: รีเซ็ตเฟรม 0 ใหม่หมด
+    // 🔁 CASE 1: RESTART (เริ่มใหม่เสมอ เพื่อแก้ปัญหาเสียงไม่ตรง)
     // -------------------------------------------------------
     if (isLoaded && overlay) {
         if(homeBtn) homeBtn.style.display = 'flex';
         
-        // 1. หยุด Loop Animation และเสียงเก่าทันที
         if (rafId) cancelAnimationFrame(rafId);
         if (sound) { sound.pause(); sound.currentTime = 0; }
         if (bgVideo) { bgVideo.pause(); bgVideo.currentTime = 0; }
         
-        // 2. รีเซ็ตโมเดลกลับไปเฟรม 0 และแช่แข็งไว้
+        // Reset Model & Animation
         if(mixer) {
-             mixer.stopAllAction(); // หยุด Action เดิม
-             
-             // รีเซ็ตทุก Action ไปที่จุดเริ่มต้น
+             mixer.stopAllAction(); 
              mixer._actions.forEach(action => {
                  action.reset();   
                  action.play();    
              });
-             
-             // 🔥 สำคัญ: บังคับ update เป็น 0 ทันที เพื่อให้ปากหุบและท่ายืนตรง
              mixer.update(0); 
-             
-             // 🔥 สำคัญ: Render ภาพนิ่ง 1 เฟรมทันที เพื่อลบภาพเก่าที่ค้างจอ
              if (renderer && scene) renderer.render(scene, scene.userData.camera);
-
-             mixer.timeScale = 0; // ❄️ แช่แข็งโมเดลไว้ ห้ามขยับจนกว่าเสียงจะมา
+             mixer.timeScale = 0; 
         }
 
-        // 3. รีเซ็ต Clock (เพื่อไม่ให้ Delta time กระโดด)
         clock.stop();
         clock.elapsedTime = 0;
 
-        // ฟังก์ชัน Loop Animation (จะเริ่มทำงานเมื่อเสียงพร้อม)
         const startAnimationLoop = () => {
             if (rafId) cancelAnimationFrame(rafId);
-
             const animateResume = () => {
                 if (!overlay) return; 
                 rafId = requestAnimationFrame(animateResume);
-                
-                const delta = clock.getDelta(); // รับค่าเวลาที่ผ่านไปจริง
+                const delta = clock.getDelta();
                 if (mixer) mixer.update(delta);
                 if (renderer && scene) renderer.render(scene, scene.userData.camera);
             };
             animateResume();
         };
 
-        // 4. สั่งเล่นเสียง -> รอ Promise -> เริ่มเล่นภาพ
         if (sound) {
-            // delay เล็กน้อยเพื่อให้ Audio Buffer เคลียร์ค่าเก่า
             setTimeout(() => {
                 sound.play().then(() => {
-                    // ✅ จังหวะนี้เสียงเริ่มดังแล้ว
-                    
-                    clock.start(); // ⏰ เริ่มเดินเวลาอนิเมชั่นตรงนี้
-                    
+                    clock.start(); 
                     if(bgVideo) bgVideo.play().catch(()=>{});
-                    
-                    if(mixer) {
-                        mixer.timeScale = 1; // 🔓 ปลดล็อคให้โมเดลขยับ
-                    }
-
-                    startAnimationLoop(); // เริ่ม Loop
-
+                    if(mixer) mixer.timeScale = 1;
+                    startAnimationLoop();
                 }).catch(() => { 
-                    // กรณี Error (เช่น Browser บล็อคเสียง) ให้เล่นภาพไปเลยกันค้าง
                     clock.start();
                     if(bgVideo) bgVideo.play();
                     if(mixer) mixer.timeScale = 1;
@@ -169,12 +146,10 @@ export function initContact() {
                 });
             }, 50); 
         } else {
-            // กรณีไม่มีไฟล์เสียง
             clock.start();
             if(mixer) mixer.timeScale = 1;
             startAnimationLoop();
         }
-
         return; 
     }
 
@@ -183,7 +158,6 @@ export function initContact() {
     // -------------------------------------------------------
     isLoaded = true;
 
-    // Overlay (100dvh for Mobile)
     overlay = document.createElement('div');
     Object.assign(overlay.style, {
       position: 'fixed', top: '0', left: '0',
@@ -196,7 +170,6 @@ export function initContact() {
     });
     document.body.appendChild(overlay);
 
-    // Video (Object-fit: fill)
     bgVideo = document.createElement('video');
     bgVideo.src = VIDEO_BG_PATH;
     bgVideo.loop = true; 
@@ -207,12 +180,10 @@ export function initContact() {
     Object.assign(bgVideo.style, {
       position: 'absolute', top: '0', left: '0', 
       width: '100%', height: '100%', 
-      objectFit: 'fill',  
-      zIndex: '0'
+      objectFit: 'fill', zIndex: '0'
     });
     overlay.appendChild(bgVideo);
 
-    // 3D Layer
     const modelLayer = document.createElement('div');
     Object.assign(modelLayer.style, {
         position: 'absolute', top: '0', left: '0', width: '100%', height: '100%',
@@ -226,9 +197,10 @@ export function initContact() {
     camera.lookAt(0, 1.0, 0);
     scene.userData = { camera: camera }; 
 
-    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, precision: 'mediump', powerPreference: 'default' });
+    // ✅ FIX 1: เอา precision: 'mediump' ออก เพื่อให้ Android เรนเดอร์ละเอียดขึ้น
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // ปรับ PixelRatio ให้คมชัดขึ้น
     renderer.outputEncoding = THREE.sRGBEncoding; 
     modelLayer.appendChild(renderer.domElement);
 
@@ -243,6 +215,7 @@ export function initContact() {
         if (!gltf) { alert("โหลดโมเดลไม่สำเร็จ"); return; }
         const model = gltf.scene;
         
+        // --- องค์ประกอบเดิม: การจัดตำแหน่ง ---
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -254,22 +227,14 @@ export function initContact() {
         const scaleFactor = targetHeight / size.y;
         if (size.y > 0) model.scale.multiplyScalar(scaleFactor);
         
+        // ** ค่าตำแหน่งเดิมที่ต้องการรักษาไว้ **
         model.position.x -= 0.7;   
         model.position.y -= 1.05;  
         model.rotation.y = 0.25; 
 
-        model.traverse((node) => {
-            if (node.isMesh) {
-                node.frustumCulled = false; 
-                if (node.material) {
-                    node.material.side = THREE.DoubleSide;
-                    if (node.material.transparent) {
-                        node.material.alphaTest = 0.5; 
-                        node.material.depthWrite = true; 
-                    }
-                }
-            }
-        });
+        // ✅ FIX 2: ใช้ Utils.makeModelRenderPriority แบบเดียวกับ ar.js
+        // สิ่งนี้จะช่วยแก้ปัญหาโมเดลเละ/ทะลุ บน Android ได้ชะงัดนัก
+        Utils.makeModelRenderPriority(model);
 
         if (gltf.animations && gltf.animations.length > 0) {
             mixer = new THREE.AnimationMixer(model);
@@ -285,7 +250,7 @@ export function initContact() {
 
         scene.add(model);
 
-        // Sync Start (First Load)
+        // Sync Start
         initTimeout = setTimeout(() => {
             if (!overlay) return; 
             try { 
@@ -322,7 +287,6 @@ export function initContact() {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     });
 
     setupUI(overlay);
@@ -443,6 +407,7 @@ function setupUI(overlay) {
                   
                   if (overlay) overlay.remove();
                   overlay = null; mixer = null; scene = null; renderer = null; isLoaded = false;
+                  
                   careerMenu.style.zIndex = ''; 
               }
           });
