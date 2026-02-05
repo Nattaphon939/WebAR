@@ -1,7 +1,7 @@
 // /WEB/js/survey.js
 import * as AR from './ar.js'; 
 
-const SURVEY_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfnQANKh9Uafc3flZGTF18TkLISD_dNWthm5mvY54COoSnPgw/viewform?usp=dialog';
+const SURVEY_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfGy2XDvD61CfquYEiIA-FMwpfDzPb8w-w7QaLgkuJOyu2cdw/viewform?usp=dialog';
 
 export function initSurvey() {
   const surveyBtn = document.getElementById('survey-btn');
