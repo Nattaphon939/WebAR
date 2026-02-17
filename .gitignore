@@ -1,0 +1,13 @@
+# GitHub Pages deployment
+
+# This file tells GitHub Pages to use the root as the site
+/
+!node_modules
+!game_assets
+!css
+!js
+!index.html
+!game.html
+!README.md
+!Contact
+!Job

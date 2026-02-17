@@ -1,0 +1,13 @@
+{
+  "name": "WebARComputer",
+  "version": "1.0.0",
+  "description": "WebAR Computer Project",
+  "main": "index.html",
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/webarcomputer-com/WebARComputer.git"
+  },
+  "author": "",
+  "license": "MIT"
+}
